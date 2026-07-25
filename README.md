@@ -5,13 +5,13 @@ Research-workflow skills for [Claude Code](https://claude.com/claude-code), focu
 ## Install
 
 ```bash
-/plugin marketplace add isaaccorley/skills
+claude plugin marketplace add isaaccorley/skills
 ```
 
 Then install whichever you want:
 
 ```bash
-/plugin install bib-audit@isaaccorley-skills
+claude plugin install bib-audit@isaaccorley-skills
 ```
 
 ## What's in here

@@ -3,8 +3,8 @@
 Flags hallucinated references, authors and bib items in a paper, and corrects badly formatted ones.
 
 ```bash
-/plugin marketplace add isaaccorley/skills
-/plugin install bib-audit@isaaccorley-skills
+claude plugin marketplace add isaaccorley/skills
+claude plugin install bib-audit@isaaccorley-skills
 ```
 
 Then ask Claude to audit your references and the skill triggers on its own.
