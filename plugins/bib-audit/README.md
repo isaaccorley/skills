@@ -7,11 +7,80 @@ Flags hallucinated references, authors and bib items in a paper, and corrects ba
 /plugin install bib-audit@isaaccorley-skills
 ```
 
-Then ask Claude to audit your references and the skill triggers on its own. Or run the scripts directly, since they're stdlib-only Python with no install step:
+Then ask Claude to audit your references and the skill triggers on its own.
+
+## Without Claude Code
+
+The scripts are plain Python 3.10+ with no dependencies, so nothing about them is Claude-specific. Clone and run:
 
 ```bash
-python3 skills/bib-audit/scripts/validate_refs.py refs.bib
+git clone https://github.com/isaaccorley/skills.git
+cd skills/plugins/bib-audit/skills/bib-audit
+python3 scripts/validate_refs.py path/to/refs.bib
 ```
+
+On a bibliography with a fabricated DOI, an invented co-author and some formatting debt, that prints:
+
+```
+[CHECK]      vaswani2017  (arxiv) -- preprint vs published differs
+    - author count 2 (bib) vs 8 (api); bib=['Vaswani, Ashish', 'Shazeer, Noam']
+[FABRICATED] fake2023: doi:10.1234/jmlr.2023.99999 resolves to no paper
+    - the identifier in the entry is fake; re-resolve from the title
+[MISMATCH]   ronneberger2015  (crossref:doi)
+    - authors in bib but NOT in api (invented?): ['bogus']
+
+RANKED FINDINGS (11 across 4 references)
+Start here: Fabricated identifier or invented author  (2xP2, 5xP3, 4xP4)
+```
+
+Exit status is 1 when anything is fabricated or mismatched and 0 on a clean file, so it drops straight into CI:
+
+```yaml
+- name: Audit bibliography
+  run: python3 scripts/validate_refs.py paper/refs.bib
+```
+
+To fix an entry, ask for the publisher's own BibTeX and paste it over yours. Your citation key is preserved:
+
+```bash
+python3 scripts/validate_refs.py refs.bib --key ronneberger2015 --show-bibtex
+```
+
+```
+@inbook{ronneberger2015, title={U-Net: Convolutional Networks for Biomedical Image Segmentation},
+  DOI={10.1007/978-3-319-24574-4_28}, booktitle={Medical Image Computing and
+  Computer-Assisted Intervention – MICCAI 2015}, publisher={Springer International
+  Publishing}, author={Ronneberger, Olaf and Fischer, Philipp and Brox, Thomas},
+  year={2015}, pages={234–241} }
+```
+
+And to find the identifier for an entry that doesn't have one:
+
+```bash
+python3 scripts/lookup_id.py "Decoupled Weight Decay Regularization" --author Loshchilov
+python3 scripts/lookup_id.py --arxiv-id 1711.05101
+```
+
+## With Codex, Copilot or Cursor
+
+The PDF path wants a model to read the extracted reference text and write out the fields, since turning a rendered reference list back into structured data is a language task. Any coding agent can do that part. Point yours at [`SKILL.md`](skills/bib-audit/SKILL.md) from whichever instruction file it reads:
+
+```bash
+# Codex and anything else following the AGENTS.md convention
+echo "For bibliography and citation work, follow skills/bib-audit/SKILL.md." >> AGENTS.md
+
+# GitHub Copilot
+mkdir -p .github
+echo "For bibliography and citation work, follow skills/bib-audit/SKILL.md." \
+  >> .github/copilot-instructions.md
+
+# Cursor
+mkdir -p .cursor/rules
+printf -- '---\nglobs: ["**/*.bib","**/*.tex"]\n---\nFollow skills/bib-audit/SKILL.md.\n' \
+  > .cursor/rules/bib-audit.mdc
+```
+
+The agent then does the extraction step and hands the JSON to `scripts/audit_refs.py`. The `.bib` path needs no model at all.
 
 ## Why
 
