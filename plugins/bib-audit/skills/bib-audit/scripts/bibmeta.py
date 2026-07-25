@@ -38,6 +38,18 @@ def default_mailto() -> str:
     return os.environ.get("BIB_AUDIT_MAILTO", "")
 
 
+def s2_api_key() -> str:
+    """Semantic Scholar key, from the environment only.
+
+    Read from ``S2_API_KEY`` and never accepted as a command-line flag, so it
+    cannot end up in shell history, a process listing, or a pasted command in an
+    issue. Optional: the endpoints used here work unauthenticated, just with a
+    much lower rate limit and (observed during development) long stretches of
+    HTTP 500. Request one at https://www.semanticscholar.org/product/api.
+    """
+    return os.environ.get("S2_API_KEY", "").strip()
+
+
 @dataclass
 class Record:
     """Authoritative metadata for one work."""
@@ -52,6 +64,12 @@ class Record:
     # date; a bib citing either year is correct.
     years: list[str] = field(default_factory=list)
     issues: list[str] = field(default_factory=list)
+    # Crossref's work `type` ("journal-article", "dissertation", "book-chapter",
+    # ...) and container title. Both exist to catch wrong title-search binds: a
+    # reference to a conference paper that lands on a dissertation is wrong no
+    # matter how well the titles score, and the type says so in one field.
+    ctype: str = ""
+    venue: str = ""
 
 
 # Letters that do NOT decompose under NFKD. Without an explicit mapping they
@@ -257,6 +275,10 @@ def http_get(
     if mailto:
         agent += f" (mailto:{mailto})"
     headers = {"Accept": accept, "User-Agent": agent}
+    # Only Semantic Scholar takes a key, and sending it anywhere else would leak
+    # it to Crossref/arXiv/OpenAlex logs for no benefit.
+    if "semanticscholar.org" in url and (key := s2_api_key()):
+        headers["x-api-key"] = key
     req = urllib.request.Request(url, headers=headers)
     for attempt in range(retries):
         try:
@@ -303,6 +325,8 @@ def crossref_to_record(msg: dict, source: str) -> Record:
         year=years[0] if years else None,
         doi=msg.get("DOI"),
         years=years,
+        ctype=(msg.get("type") or "").strip().lower(),
+        venue=next(iter(msg.get("container-title") or []), ""),
     )
 
 

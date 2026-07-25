@@ -46,6 +46,15 @@ Which also means the release gate is *a clean run on known-good bibliographies*,
 
 If you're using this in a review, resolve the identifier yourself in a browser first, and report the observation rather than the motive. "Ref [14]'s DOI resolves to a different paper" is checkable and useful; "the authors fabricated citations" is the editor's call, not a reviewer's line item. Anonymized references in a double-blind submission are unresolvable *by design* — the scripts detect those, but flagging one by hand reads as not understanding the review process.
 
+## Optional environment variables
+
+Both read from the environment only, never as CLI flags, so a key can't end up in shell history or in a command someone pastes into an issue.
+
+| Variable | Why |
+|---|---|
+| `BIB_AUDIT_MAILTO` | Joins Crossref's polite pool. Anonymous clients get throttled harder across a few hundred entries. |
+| `S2_API_KEY` | Authenticates Semantic Scholar. Optional but worth having — unauthenticated S2 returned `500` for an entire day during development, and it's the only source that resolves a paper with no DOI *and* no arXiv ID. [Request one here.](https://www.semanticscholar.org/product/api) |
+
 ## Tests
 
 ```bash

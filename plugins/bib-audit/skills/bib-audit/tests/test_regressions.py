@@ -21,7 +21,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
-from audit_refs import bind_is_credible  # noqa: E402
+from audit_refs import bind_is_credible, type_is_plausible  # noqa: E402
 from bibmeta import (  # noqa: E402
     Record,
     delatex,
@@ -402,6 +402,97 @@ class TestStyleChecks(unittest.TestCase):
     def test_generation_signal_needs_two_entries(self):
         self.assertIsNone(generation_signal(["a"], 50))
         self.assertIsNotNone(generation_signal(["a", "b"], 50))
+
+
+class TestPublicationTypeGuard(unittest.TestCase):
+    """Defence in depth behind the author-overlap check. When a reference prints
+    no authors, overlap cannot discriminate — but Crossref's work `type` still
+    can, and it catches both historical wrong binds on its own.
+    """
+
+    def test_dissertation_rejected_for_a_paper_reference(self):
+        thesis = Record("crossref:search", "Graph based image segmentation", [], "2001",
+                        ctype="dissertation")
+        ref = {"title": "Efficient graph-based image segmentation", "authors": [], "venue": "IJCV"}
+        self.assertFalse(bind_is_credible(thesis, ref))
+
+    def test_book_chapter_rejected_for_a_paper_reference(self):
+        chapter = Record("crossref:search", "Is Attention All You Need?", [], "2025",
+                         ctype="book-chapter")
+        ref = {"title": "Attention is all you need", "authors": [], "venue": "NeurIPS"}
+        self.assertFalse(bind_is_credible(chapter, ref))
+
+    def test_proceedings_article_still_binds(self):
+        real = Record("crossref:search", "Attention is All you Need", [], "2017",
+                      ctype="proceedings-article")
+        ref = {"title": "Attention is all you need", "authors": [], "venue": "NeurIPS"}
+        self.assertTrue(bind_is_credible(real, ref))
+
+    def test_genuine_thesis_citation_is_allowed(self):
+        # People do cite theses; the guard must only fire when the reference gives
+        # no sign of citing one.
+        thesis = Record("crossref:search", "Graph based image segmentation", [], "2001",
+                        ctype="dissertation")
+        self.assertTrue(type_is_plausible(thesis, {"venue": "Master's thesis, HKUST"}))
+        self.assertTrue(type_is_plausible(thesis, {"kind": "thesis"}))
+
+    def test_unknown_type_does_not_block(self):
+        # Records from arXiv/DataCite/S2 carry no ctype; absence must not reject.
+        rec = Record("arxiv", "Attention is All you Need", [], "2017")
+        self.assertTrue(type_is_plausible(rec, {"venue": "NeurIPS"}))
+
+
+class TestLegacyPathCannotAccuse(unittest.TestCase):
+    """The legacy PDF path parses with heuristics, and that parsing produced every
+    false fabrication verdict found in development. It is therefore capped at
+    advisory findings. This is a structural guarantee, so it is tested
+    structurally — a future edit reintroducing P1/P2 there should fail here.
+    """
+
+    def setUp(self):
+        self.src = (
+            Path(__file__).resolve().parent.parent / "scripts" / "resolve_refs.py"
+        ).read_text()
+
+    def test_no_p1_or_p2_findings_constructed(self):
+        for tier in ("P1_INVENTED", "P2_FABRICATED"):
+            # Allowed in a comment explaining the cap; never in a Finding(...) call.
+            calls = [
+                ln for ln in self.src.splitlines()
+                if tier in ln and not ln.lstrip().startswith("#")
+            ]
+            self.assertEqual(calls, [], f"{tier} used in resolve_refs.py: {calls}")
+
+    def test_does_not_emit_the_fabricated_label(self):
+        # "[FABRICATED]" is an integrity-shaped word; an unreliable parser must
+        # not print it. It says [SUSPECT] ... provisional instead.
+        self.assertNotIn("[FABRICATED]", self.src)
+        self.assertIn("[SUSPECT]", self.src)
+
+    def test_findings_are_marked_provisional(self):
+        self.assertIn("PROVISIONAL", self.src)
+
+    def test_still_exits_nonzero_for_ci(self):
+        # Capping severity must not cost the CI gate.
+        self.assertIn("return 1 if (fabricated or notfound) else 0", self.src)
+
+
+class TestSecretHandling(unittest.TestCase):
+    def test_s2_key_read_from_env_only(self):
+        # Never a CLI flag: that would put the key in shell history and in any
+        # command someone pastes into a bug report.
+        import bibmeta
+
+        for script in ("audit_refs.py", "resolve_refs.py", "validate_refs.py", "lookup_id.py"):
+            src = (Path(__file__).resolve().parent.parent / "scripts" / script).read_text()
+            self.assertNotIn("--s2-api-key", src)
+            self.assertNotIn("--api-key", src)
+        self.assertEqual(bibmeta.s2_api_key.__module__, "bibmeta")
+
+    def test_key_sent_only_to_semantic_scholar(self):
+        # Sending it to Crossref/arXiv/OpenAlex would leak it for no benefit.
+        src = (Path(__file__).resolve().parent.parent / "scripts" / "bibmeta.py").read_text()
+        self.assertIn('if "semanticscholar.org" in url', src)
 
 
 class TestTriageRendering(unittest.TestCase):

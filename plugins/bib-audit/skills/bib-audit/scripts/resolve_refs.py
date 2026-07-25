@@ -25,19 +25,27 @@ Then::
 Verdicts::
 
     [OK]             resolved and consistent with the reference string
-    [FABRICATED]     a printed DOI/arXiv id names no paper, or names a work
-                     whose title is clearly not the one cited
+    [SUSPECT]        a printed DOI/arXiv id names no paper, or names a work
+                     whose title is clearly not the one cited -- PROVISIONAL
     [CHECK]          bound by title search, or resolved with an author/year
                      discrepancy, or anonymized for blind review -- advisory
-    [NOT FOUND]      no match in Crossref, arXiv or OpenAlex
+    [NOT FOUND]      no match in Crossref, arXiv or OpenAlex -- PROVISIONAL
     [LOOKUP FAILED]  rate limit or outage; says nothing about the reference
 
-Escalation to [FABRICATED] deliberately requires a dead identifier or a badly
-wrong title. Author- and year-level disagreements stay advisory, because PDF
-extraction mangles diacritics and "et al." hides author order -- treating those
-as fabrication produced six false findings on one real paper.
+**Every finding from this script is capped at P3 (advisory), by design.** This
+path splits and parses the reference list with heuristics, and that parsing --
+not any API answer -- is what produced every false fabrication verdict found
+during development. It also silently drops text on author-year bibliographies
+(ICLR/ACL/NeurIPS style, no ``[N]`` markers), where a capitalised continuation
+line reads as a new reference: one real paper lost 26% of its list that way.
 
-Stdlib only. Read-only. Exit 1 if anything is fabricated or unfindable.
+So this script is structurally unable to report P1 (work does not exist) or P2
+(fabricated identifier / invented author). An unreliable parser must not put an
+integrity-shaped accusation next to somebody's name. It still exits non-zero, so
+it works as a CI gate; when you need a verdict you can actually defend, use
+``audit_refs.py``, where a reader extracts the fields.
+
+Stdlib only. Read-only. Exit 1 on suspect or unfindable references.
 """
 
 import argparse
@@ -64,7 +72,10 @@ from bibmeta import (
     title_ratio,
 )
 
-from triage import P1_INVENTED, P2_FABRICATED, P3_METADATA, Finding, render_ranked
+# P1_INVENTED and P2_FABRICATED are deliberately NOT imported: this path's
+# heuristic parsing is not reliable enough to justify an integrity-shaped
+# finding, so every finding it emits is capped at P3. See the module docstring.
+from triage import P3_METADATA, Finding, render_ranked
 
 from refparse import (
     YEAR_RE,
@@ -212,6 +223,12 @@ def main() -> int:
         print(f"error: no references parsed out of {args.refs}", file=sys.stderr)
         return 2
 
+    print(
+        "NOTE: references were split and parsed by heuristic, so every finding below\n"
+        "      is PROVISIONAL and capped at advisory (P3). Do not put any of it in a\n"
+        "      review without re-running through audit_refs.py. See --help.\n"
+    )
+
     ok = fabricated = check = notfound = unavailable = unindexed = 0
     resolved: list[tuple[int, Record]] = []
     findings: list[Finding] = []
@@ -236,10 +253,14 @@ def main() -> int:
 
         if dead:
             fabricated += 1
-            print(f"[FABRICATED] {label} {dead} names no paper")
+            print(f"[SUSPECT]    {label} {dead} names no paper (provisional)")
             print(f"    ref: {short}")
-            findings.append(Finding(P2_FABRICATED, f"ref {idx}", f"{dead} names no paper",
-                short, "verify in a browser, then correct the identifier — not the title"))
+            findings.append(Finding(P3_METADATA, f"ref {idx}",
+                f"{dead} names no paper — PROVISIONAL, parsed by heuristic",
+                short,
+                "check the extraction did not truncate the identifier at a line wrap, "
+                "then resolve it in a browser. Re-run through audit_refs.py before "
+                "treating this as a real finding"))
             continue
 
         if rec is None:
@@ -264,9 +285,12 @@ def main() -> int:
             notfound += 1
             print(f"[NOT FOUND]  {label} no Crossref/arXiv/OpenAlex match")
             print(f"    ref: {short}")
-            findings.append(Finding(P1_INVENTED, f"ref {idx}",
-                "no match in Crossref, arXiv or OpenAlex",
-                short, "check the extraction parsed cleanly, then search the title by hand"))
+            findings.append(Finding(P3_METADATA, f"ref {idx}",
+                "no match in Crossref, arXiv or OpenAlex — PROVISIONAL",
+                short,
+                "most likely a parse failure, not a missing paper: this path merges and "
+                "drops references on author-year lists. Confirm the extracted count "
+                "matches the paper, then re-run through audit_refs.py"))
             continue
 
         issues, title_wrong = agrees(ref, rec)
@@ -278,14 +302,15 @@ def main() -> int:
             # A printed identifier that resolves to a work the reference does
             # not describe is the same failure as a dead one: the id is wrong.
             fabricated += 1
-            print(f"[FABRICATED] {label} printed identifier resolves to a different paper")
+            print(f"[SUSPECT]    {label} printed identifier resolves to a different paper (provisional)")
             for msg in issues:
                 print(f"    - {msg}")
             print(f"    ref: {short}")
-            findings.append(Finding(P2_FABRICATED, f"ref {idx}",
-                "printed identifier resolves to a different paper",
+            findings.append(Finding(P3_METADATA, f"ref {idx}",
+                "printed identifier resolves to a different paper — PROVISIONAL",
                 "\n".join(issues) + f"\nref: {short}",
-                "re-resolve from the title and replace the identifier"))
+                "confirm the reference parsed intact, then re-resolve from the title. "
+                "Re-run through audit_refs.py before treating this as a real finding"))
             continue
 
         if issues:

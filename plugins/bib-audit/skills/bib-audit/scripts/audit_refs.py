@@ -76,6 +76,7 @@ from bibmeta import (
     default_mailto,
     family_keys,
     http_get,
+    norm_text,
     openalex_search,
     s2_batch,
     TITLE_ACCEPT_RATIO,
@@ -111,6 +112,33 @@ def s2_match_title(title: str, mailto: str) -> dict | None:
 
 
 
+# Crossref work types that a normal paper reference should not resolve to. A
+# fuzzy title search will happily return a thesis or a book chapter whose title
+# restates a famous paper's, and the title score cannot tell the difference --
+# "Graph based image segmentation" (an HKUST master's thesis) and "Is Attention
+# All You Need?" (a 2025 book chapter) both scored as accepted binds.
+UNLIKELY_BIND_TYPES = {
+    "dissertation", "book-chapter", "book", "book-part", "book-section",
+    "monograph", "edited-book", "reference-book", "book-series",
+}
+# Words in the reference's own venue/kind that make such a type legitimate --
+# people really do cite theses and book chapters, just not usually by accident.
+_TYPE_OK_WORDS = ("thesis", "dissertation", "book", "chapter", "monograph", "phd", "msc", "master")
+
+
+def type_is_plausible(cand: Record, ref: dict) -> bool:
+    """Reject a bind whose publication type contradicts the reference.
+
+    Only fires on the types above, and only when the reference gives no sign of
+    citing that kind of work. A reference that genuinely cites a thesis says so
+    in its venue, so this costs nothing on correct entries.
+    """
+    if cand.ctype not in UNLIKELY_BIND_TYPES:
+        return True
+    described = norm_text(f"{ref.get('venue') or ''} {ref.get('kind') or ''} {ref.get('raw') or ''}")
+    return any(word in described for word in _TYPE_OK_WORDS)
+
+
 def bind_is_credible(cand: Record, ref: dict) -> bool:
     """Should a fuzzy title-search hit be accepted as the cited work?
 
@@ -122,9 +150,13 @@ def bind_is_credible(cand: Record, ref: dict) -> bool:
     book chapter "Is Attention All You Need?" (cov 0.905, ratio 0.880) -- after
     which the real authors were reported as invented.
 
-    So: require similarity in BOTH directions, and require at least one author in
-    common when the reference names any. Every wrong bind observed in testing had
-    zero author overlap, which makes it the cheapest reliable discriminator.
+    So: require similarity in BOTH directions, require at least one author in
+    common when the reference names any, and reject a hit whose publication TYPE
+    is not the kind of thing the reference describes. Every wrong bind observed in
+    testing had zero author overlap, which makes it the cheapest reliable
+    discriminator; the type check is defence in depth, and it happens to catch
+    both of the binds above on its own (`dissertation` and `book-chapter`) even
+    when the author lists are unavailable to compare.
     """
     title = (ref.get("title") or "").strip()
     if not title or not cand.title:
@@ -132,6 +164,8 @@ def bind_is_credible(cand: Record, ref: dict) -> bool:
     if title_ratio(title, cand.title) < TITLE_ACCEPT_RATIO:
         return False
     if title_coverage(cand.title, title) < 0.80 or title_coverage(title, cand.title) < 0.80:
+        return False
+    if not type_is_plausible(cand, ref):
         return False
     cited = {k for a in (ref.get("authors") or []) for k in family_keys(a)}
     if cited and cand.families:
