@@ -1,0 +1,11 @@
+{
+  "name": "bib-audit",
+  "version": "1.0.0",
+  "description": "Flag hallucinated references, authors and bib items in any paper, and correct badly formatted ones. Resolves every reference against Crossref, arXiv, DataCite and Semantic Scholar, then ranks findings so integrity problems sort above formatting nits.",
+  "author": {
+    "name": "Isaac Corley"
+  },
+  "homepage": "https://github.com/isaaccorley/skills/tree/main/plugins/bib-audit",
+  "license": "MIT",
+  "keywords": ["bibtex", "citations", "references", "latex", "peer-review", "hallucination"]
+}
