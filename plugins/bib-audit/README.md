@@ -9,58 +9,6 @@ Flags hallucinated references, authors and bib items in a paper, and corrects ba
 
 Then ask Claude to audit your references and the skill triggers on its own.
 
-## Without Claude Code
-
-The scripts are plain Python 3.10+ with no dependencies, so nothing about them is Claude-specific. Clone and run:
-
-```bash
-git clone https://github.com/isaaccorley/skills.git
-cd skills/plugins/bib-audit/skills/bib-audit
-python3 scripts/validate_refs.py path/to/refs.bib
-```
-
-On a bibliography with a fabricated DOI, an invented co-author and some formatting debt, that prints:
-
-```
-[CHECK]      vaswani2017  (arxiv) -- preprint vs published differs
-    - author count 2 (bib) vs 8 (api); bib=['Vaswani, Ashish', 'Shazeer, Noam']
-[FABRICATED] fake2023: doi:10.1234/jmlr.2023.99999 resolves to no paper
-    - the identifier in the entry is fake; re-resolve from the title
-[MISMATCH]   ronneberger2015  (crossref:doi)
-    - authors in bib but NOT in api (invented?): ['bogus']
-
-RANKED FINDINGS (11 across 4 references)
-Start here: Fabricated identifier or invented author  (2xP2, 5xP3, 4xP4)
-```
-
-Exit status is 1 when anything is fabricated or mismatched and 0 on a clean file, so it drops straight into CI:
-
-```yaml
-- name: Audit bibliography
-  run: python3 scripts/validate_refs.py paper/refs.bib
-```
-
-To fix an entry, ask for the publisher's own BibTeX and paste it over yours. Your citation key is preserved:
-
-```bash
-python3 scripts/validate_refs.py refs.bib --key ronneberger2015 --show-bibtex
-```
-
-```
-@inbook{ronneberger2015, title={U-Net: Convolutional Networks for Biomedical Image Segmentation},
-  DOI={10.1007/978-3-319-24574-4_28}, booktitle={Medical Image Computing and
-  Computer-Assisted Intervention – MICCAI 2015}, publisher={Springer International
-  Publishing}, author={Ronneberger, Olaf and Fischer, Philipp and Brox, Thomas},
-  year={2015}, pages={234–241} }
-```
-
-And to find the identifier for an entry that doesn't have one:
-
-```bash
-python3 scripts/lookup_id.py "Decoupled Weight Decay Regularization" --author Loshchilov
-python3 scripts/lookup_id.py --arxiv-id 1711.05101
-```
-
 ## With Codex, Copilot or another agent
 
 For the PDF path, some agent needs to read the extracted reference text and write out the fields, since turning a rendered reference list back into structured data is a language task rather than a regex one. The `.bib` path doesn't need an agent at all, but if you want this available as a skill inside Codex, Copilot, Cursor or anything else, [`npx skills`](https://github.com/vercel-labs/skills) installs it directly from this repo without cloning anything yourself:
