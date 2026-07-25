@@ -61,26 +61,15 @@ python3 scripts/lookup_id.py "Decoupled Weight Decay Regularization" --author Lo
 python3 scripts/lookup_id.py --arxiv-id 1711.05101
 ```
 
-## With Codex, Copilot or Cursor
+## With Codex, Copilot or another agent
 
-The PDF path wants a model to read the extracted reference text and write out the fields, since turning a rendered reference list back into structured data is a language task. Any coding agent can do that part. Point yours at [`SKILL.md`](skills/bib-audit/SKILL.md) from whichever instruction file it reads:
+For the PDF path, some agent needs to read the extracted reference text and write out the fields, since turning a rendered reference list back into structured data is a language task rather than a regex one. The `.bib` path doesn't need an agent at all, but if you want this available as a skill inside Codex, Copilot, Cursor or anything else, [`npx skills`](https://github.com/vercel-labs/skills) installs it directly from this repo without cloning anything yourself:
 
 ```bash
-# Codex and anything else following the AGENTS.md convention
-echo "For bibliography and citation work, follow skills/bib-audit/SKILL.md." >> AGENTS.md
-
-# GitHub Copilot
-mkdir -p .github
-echo "For bibliography and citation work, follow skills/bib-audit/SKILL.md." \
-  >> .github/copilot-instructions.md
-
-# Cursor
-mkdir -p .cursor/rules
-printf -- '---\nglobs: ["**/*.bib","**/*.tex"]\n---\nFollow skills/bib-audit/SKILL.md.\n' \
-  > .cursor/rules/bib-audit.mdc
+npx skills add isaaccorley/skills --agent github-copilot codex
 ```
 
-The agent then does the extraction step and hands the JSON to `scripts/audit_refs.py`. The `.bib` path needs no model at all.
+`--agent` takes any of the [40+ tools it supports](https://github.com/vercel-labs/skills#supported-agents); `--agent '*'` installs to whatever it finds configured on your machine. That drops the skill into `.agents/skills/bib-audit/`, which both Copilot and Codex read, and records the source in `skills-lock.json` so `npx skills update` can pull new versions later.
 
 ## Why
 
