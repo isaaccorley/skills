@@ -19,6 +19,7 @@ claude plugin install bib-audit@isaaccorley-skills
 | Plugin | What it does |
 |---|---|
 | [`bib-audit`](plugins/bib-audit) | Flags hallucinated references, authors and bib items in a paper, and corrects badly formatted ones. Run it on your own draft before submitting, or on a submission you're reviewing. |
+| [`ai-audit`](plugins/ai-audit) | Flags AI-generated language patterns in academic manuscripts (hedging tics, structural tells, flagged vocabulary, punctuation signatures) so you can fix them before a reviewer or detector does. |
 
 ## License
 
