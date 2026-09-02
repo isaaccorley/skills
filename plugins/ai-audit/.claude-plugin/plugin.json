@@ -1,0 +1,11 @@
+{
+  "name": "ai-audit",
+  "version": "1.0.0",
+  "description": "Flag AI-generated language patterns in academic manuscripts — hedging tics, structural tells, flagged vocabulary, and punctuation signatures — so you can fix them before a reviewer or detector does.",
+  "author": {
+    "name": "Harald Kristen"
+  },
+  "homepage": "https://github.com/isaaccorley/skills/tree/main/plugins/ai-audit",
+  "license": "MIT",
+  "keywords": ["academic-writing", "ai-detection", "latex", "peer-review", "manuscript", "language-audit"]
+}
