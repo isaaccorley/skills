@@ -32,6 +32,7 @@ Examples::
     python3 validate_refs.py refs.bib                        # full audit
     python3 validate_refs.py refs.bib --key smith2024example --show-bibtex
     python3 validate_refs.py refs.bib --show-bibtex          # audit + drop-in fixes
+    python3 validate_refs.py library.bib --aux paper.aux     # only the keys the paper cites
 
 Set ``BIB_AUDIT_MAILTO`` (or pass ``--mailto``) to join Crossref's polite
 pool: an anonymous client gets throttled harder on large bibliographies.
@@ -45,7 +46,13 @@ import urllib.error
 from dataclasses import dataclass
 from pathlib import Path
 
-from bibstyle import AND_OTHERS_RE, author_list_tells, generation_signal, style_findings
+from bibstyle import (
+    AND_OTHERS_RE,
+    PAGE_ONE_SUMMARY,
+    author_list_tells,
+    generation_signal,
+    style_findings,
+)
 from triage import P1_INVENTED, P2_FABRICATED, P3_METADATA, Finding, render_ranked
 
 from bibmeta import (
@@ -59,10 +66,28 @@ from bibmeta import (
     arxiv_search_title,
     openalex_search,
     datacite_by_doi,
+    dead_identifier_hint,
     default_mailto,
     family_key,
+    pages_match,
     title_ratio,
 )
+
+# BibTeX entry types that name grey literature: books, manuals, theses, web
+# resources, tech reports. DOI registries legitimately do not index most of
+# these, so a title-search miss is not evidence the work is invented. The PDF
+# path has a `kind` field for exactly this; the .bib path had no equivalent and
+# put two editions of *Introduction to Algorithms* and *The Fellowship of the
+# Ring* in P1 as works that "may not exist" -- 18 of 24 P1 findings on one
+# bibliography. The entry type carries the information for free.
+#
+# `@misc` is here even though arXiv preprints are often filed as @misc: those
+# carry an eprint/arXiv ID and resolve through it before the type is consulted.
+GREY_ENTRY_TYPES = {
+    "book", "misc", "manual", "techreport", "mastersthesis", "phdthesis",
+    "unpublished", "booklet", "online", "electronic", "www", "software",
+    "dataset", "standard", "patent", "thesis", "report",
+}
 
 
 @dataclass
@@ -80,6 +105,35 @@ class Entry:
         worse) problem than an entry that never had one.
         """
         return bool(self.fields.get("doi") or self.fields.get("eprint"))
+
+    def is_grey(self) -> bool:
+        """Grey literature by entry type -- the .bib analogue of the JSON ``kind``.
+
+        Only consulted when the entry has no identifier and no title search
+        found it. An unresolved ``@book`` is reported ``[UNVERIFIABLE]`` at the
+        housekeeping tier, not ``[UNRESOLVED]`` at P1.
+        """
+        return self.etype in GREY_ENTRY_TYPES
+
+
+def cited_keys_from_aux(aux_text: str) -> set[str]:
+    r"""Citation keys from a LaTeX ``.aux`` file, lowercased.
+
+    Classic BibTeX resolves citation keys case-insensitively, so the paper's
+    ``\citation{iverson:1962:apl}`` matches the library's ``Iverson:1962:APL``.
+    A naive case-sensitive filter silently dropped three cited entries from a
+    191-entry audit. Compare through ``fold_key`` on both sides.
+    """
+    keys: set[str] = set()
+    for m in re.finditer(r"\\(?:citation|abx@aux@cite)(?:\{[^}]*\})?\{([^}]*)\}", aux_text):
+        for k in m.group(1).split(","):
+            if k.strip() and k.strip() != "*":
+                keys.add(fold_key(k))
+    return keys
+
+
+def fold_key(key: str) -> str:
+    return key.strip().lower()
 
 
 def unescape_identifier(value: str) -> str:
@@ -354,7 +408,13 @@ def canonical_bibtex(entry: Entry, rec: Record, mailto: str) -> str | None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("bib", type=Path, help="path to the .bib file to audit")
-    parser.add_argument("--key", help="validate only this citation key")
+    parser.add_argument("--key", help="validate only this citation key (case-insensitive, like BibTeX)")
+    parser.add_argument(
+        "--aux",
+        type=Path,
+        help="a LaTeX .aux file; validate only the keys the paper actually cites "
+             "(the natural way to scope a large shared library)",
+    )
     parser.add_argument(
         "--show-bibtex",
         action="store_true",
@@ -374,12 +434,24 @@ def main() -> int:
 
     entries = parse_bibtex(args.bib.read_text(encoding="utf-8"))
     if args.key:
-        entries = [e for e in entries if e.key == args.key]
+        entries = [e for e in entries if fold_key(e.key) == fold_key(args.key)]
         if not entries:
             print(f"error: key {args.key!r} not found in {args.bib}", file=sys.stderr)
             return 2
+    if args.aux:
+        if not args.aux.exists():
+            print(f"error: {args.aux} not found", file=sys.stderr)
+            return 2
+        cited = cited_keys_from_aux(args.aux.read_text(encoding="utf-8", errors="replace"))
+        have = {fold_key(e.key) for e in entries}
+        for missing in sorted(cited - have):
+            print(f"[NOT IN BIB] {missing}: cited in {args.aux.name} but absent from {args.bib.name}")
+        entries = [e for e in entries if fold_key(e.key) in cited]
+        if not entries:
+            print(f"error: none of the {len(cited)} cited keys are in {args.bib}", file=sys.stderr)
+            return 2
 
-    ok = mismatch = check = unresolved = fabricated = unavailable = 0
+    ok = mismatch = check = unresolved = unverifiable = fabricated = unavailable = 0
     flagged: list[tuple[Entry, Record]] = []
     findings: list[Finding] = []
     and_others: list[str] = []
@@ -388,7 +460,9 @@ def main() -> int:
         if idx:
             time.sleep(args.sleep)
         # Style checks are local; run them first so P4 survives a lookup failure.
-        findings.extend(style_findings(entry.key, entry.fields))
+        # Held back until the lookup answers, because one of them (page range
+        # starts at 1) is withdrawn when the registrar deposits the same range.
+        style = style_findings(entry.key, entry.fields)
         if AND_OTHERS_RE.search(entry.fields.get("author", "")):
             and_others.append(entry.key)
 
@@ -397,33 +471,50 @@ def main() -> int:
         except (LookupUnavailable, urllib.error.HTTPError) as exc:
             # Never a finding: the reference was not checked, not disproved.
             unavailable += 1
+            findings.extend(style)
             print(f"[LOOKUP FAILED] {entry.key}: {exc} -- re-run this one")
             continue
 
+        if rec is not None and pages_match(entry.fields.get("pages", ""), rec):
+            style = [f for f in style if f.summary != PAGE_ONE_SUMMARY]
+        findings.extend(style)
+
         if dead:
             fabricated += 1
+            hint = dead_identifier_hint(dead)
             findings.append(Finding(P2_FABRICATED, entry.key,
                 f"{dead} resolves to no paper",
-                "the identifier in the entry names nothing",
+                hint or "the identifier in the entry names nothing",
                 "re-resolve from the title with lookup_id.py and replace the IDENTIFIER, not the title"))
             print(f"[FABRICATED] {entry.key}: {dead} resolves to no paper")
-            print("    - the identifier in the entry is fake; re-resolve from the title")
-            print("      with lookup_id.py and replace the identifier, not the title")
+            if hint:
+                print(f"    - {hint}")
+            else:
+                print("    - the identifier in the entry is fake; re-resolve from the title")
+                print("      with lookup_id.py and replace the identifier, not the title")
             continue
 
         if rec is None:
+            if not entry.fields.get("title"):
+                unresolved += 1
+                print(f"[UNRESOLVED] {entry.key}: no doi/arxiv id and no title to search")
+                continue
+            if entry.is_grey():
+                # Books, manuals, theses, web pages: absence from a DOI registry
+                # is not evidence. Same routing as the JSON path's `kind`.
+                unverifiable += 1
+                print(f"[UNVERIFIABLE] {entry.key}: @{entry.etype} -- not indexed by DOI registries")
+                findings.append(Finding(P3_METADATA, entry.key,
+                    f"@{entry.etype} citation cannot be registrar-verified",
+                    "grey literature; a title-search miss says nothing about whether it exists",
+                    "check the url/isbn resolves; add a doi if the publisher has one"))
+                continue
             unresolved += 1
-            note = (
-                "no close title match; may be an invented paper"
-                if entry.fields.get("title")
-                else "no doi/arxiv id and no title to search"
-            )
-            print(f"[UNRESOLVED] {entry.key}: {note}")
-            if entry.fields.get("title"):
-                findings.append(Finding(P1_INVENTED, entry.key,
-                    "no match in Crossref or arXiv for this title",
-                    "verify by hand; if it truly does not exist, the claim citing it is unsupported",
-                    "search the exact title in a browser before acting"))
+            print(f"[UNRESOLVED] {entry.key}: no close title match; may be an invented paper")
+            findings.append(Finding(P1_INVENTED, entry.key,
+                "no match in Crossref or arXiv for this title",
+                "verify by hand; if it truly does not exist, the claim citing it is unsupported",
+                "search the exact title in a browser before acting"))
             continue
 
         issues = compare(entry, rec)
@@ -486,7 +577,8 @@ def main() -> int:
     print(
         f"\n{ok} ok, {fabricated} fabricated identifiers, {mismatch} mismatched "
         f"(authoritative), {check} to check (search-only), {unresolved} unresolved, "
-        f"{unavailable} lookup failed, {len(entries)} total"
+        f"{unverifiable} unverifiable (grey literature), {unavailable} lookup failed, "
+        f"{len(entries)} total"
     )
 
     findings_p1 = sum(1 for f in findings if f.priority == P1_INVENTED)

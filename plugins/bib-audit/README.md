@@ -25,7 +25,7 @@ Now that a plausible-looking DOI costs nothing to generate, "did an LLM write th
 
 ## Inputs
 
-A `.bib` file, a PDF, or a pasted reference list. The `.bib` path is fully automatic. For a PDF, Claude reads the extracted reference text and writes out the fields, since turning a rendered reference list back into structured data is a language task rather than a regex one.
+A `.bib` file, a PDF, or a pasted reference list. The `.bib` path is fully automatic, and `--aux paper.aux` scopes a large shared library to the keys the paper actually cites. For a PDF, Claude reads the extracted reference text and writes out the fields, since turning a rendered reference list back into structured data is a language task rather than a regex one.
 
 ## What it catches
 

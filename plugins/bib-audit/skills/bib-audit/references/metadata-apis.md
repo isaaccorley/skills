@@ -29,7 +29,16 @@ Title → DOI + canonical authors:
 ```bash
 curl -s "https://api.crossref.org/works?query.bibliographic=TITLE+WORDS&rows=1" \
   | python3 -c 'import sys,json; w=json.load(sys.stdin)["message"]["items"][0]; \
-    print(w["DOI"], "|", w["title"][0], "|", ", ".join(a.get("family","") for a in w.get("author",[])))'
+    print(w["DOI"], "|", ": ".join(w["title"][:1] + w.get("subtitle", [])[:1]), "|", ", ".join(a.get("family","") for a in w.get("author",[])))'
+```
+
+From Python, the same through the shared layer (`mailto` is optional everywhere; it falls back to `BIB_AUDIT_MAILTO`). The return type is `bibmeta.Record`, a dataclass with `title`, `families`, `year`/`years`, `doi`, `ctype`, `venue`/`venues`, `pages`, `article_number`, and a dict-style `.get()`:
+
+```python
+import sys; sys.path.insert(0, "scripts")
+from bibmeta import crossref_by_doi
+rec = crossref_by_doi("10.1145/3352460.3358275")
+rec.title, rec.venue, rec.get("pages")
 ```
 
 arXiv metadata by ID (batched, comma-separated):
@@ -74,7 +83,12 @@ Suggested shape for a large bibliography: (1) one S2 batch call over every print
 
 ## Per-source caveats
 
+- **Crossref fields are plural; never read `[0]` and stop.** Three of the four false-positive classes in a 191-reference audit came from this one habit.
+  - `title` + `subtitle`: many ACM/IEEE proceedings deposit the pre-colon text as `title` and the rest as a separate `subtitle` element (`10.1145/3352460.3358275` → `title=['ExTensor']`, `subtitle=['An Accelerator for Sparse Tensor Algebra']`). Comparing against `title[0]` alone scores 0.28 against the correct bib title, which is the shape the DOI-resolved rule escalates to `[FABRICATED]`. Join them with `": "` (`bibmeta.join_title_subtitle`; it skips the subtitle when the title already contains it, because some publishers deposit both).
+  - `container-title` is an array, and for Springer LNCS/IFIP volumes it has two elements: `['Lecture Notes in Computer Science', 'Advances in Cryptology - EUROCRYPT 2004']`. `[0]` is the series, which is nearly content-free. Crossref documents no ordering, so take the longest element (`bibmeta.pick_venue`), or show all of them (`Record.venues`).
+  - `page` is deposited as printed. Article-numbered journals (PACMPL/OOPSLA, TOG, PNAS) genuinely paginate every paper from 1 and ACM does not deposit `article-number` for them (`10.1145/3133901` → `page=1-29`, no article number). A bib `pages = {1--29}` that matches the registrar's `page` is correct, not a placeholder.
 - **Crossref**: `published` date-parts can be the online-first year, not the print year — check `published-print` too before flagging a year. Author objects sometimes omit `family` for consortia.
+- **`10.5555/*` is never a valid DOI.** It is Crossref's *internal* prefix (Crossref confirmed this directly, and that ACM should not be displaying it). The ACM Digital Library shows `10.5555/<id>` for works it hosts without a registered DOI (NIPS proceedings volumes, some workshop papers) and citation managers copy it into bibs. It 404s on Crossref and DataCite alike, and no retry or alternate registry will resolve it. Treat it as "this string is not a DOI", which is distinct from both a lookup failure and an invented paper — the work usually exists, under a different identifier or none. The scripts print this explanation next to the `[FABRICATED]` verdict.
 - **doi.org negotiation**: returns the registrar's metadata; for Crossref DOIs that means the publisher's. Generated citation key is arbitrary — replace it with the bib's existing key.
 - **arXiv**: `search_query` endpoint is flaky (timeouts, 503s); `id_list` is reliable. Returned year is the *v1 submission* year. Author list is the *latest version's* list, which may still differ from camera-ready.
 - **DataCite DOIs** (`10.48550/arXiv.*`, Zenodo `10.5281/*`): not in Crossref (404). arXiv ones → arXiv API; others → `api.datacite.org/dois/{doi}` or doi.org negotiation (DataCite also honors `Accept: application/x-bibtex`).

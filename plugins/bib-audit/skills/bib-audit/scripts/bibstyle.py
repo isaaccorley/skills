@@ -23,6 +23,8 @@ from triage import P3_METADATA, P4_STYLE, Finding
 # is a reliable tell for a generated bibliography.
 AND_OTHERS_RE = re.compile(r"\band\s+others\b", re.I)
 
+PAGE_ONE_SUMMARY = "page range starts at 1 — confirm against the registry"
+
 
 def style_findings(key: str, fields: dict[str, str]) -> list[Finding]:
     """P4 formatting findings for one .bib entry."""
@@ -34,12 +36,19 @@ def style_findings(key: str, fields: dict[str, str]) -> list[Finding]:
             Finding(P4_STYLE, key, "page range uses a single hyphen", f"pages = {{{pages}}}",
                     "use an en-dash: 35--49")
         )
+    # A prompt, not a verdict. Article-numbered journals (PACMPL/OOPSLA, TOG,
+    # PNAS, most Nature/Elsevier e-only titles) genuinely paginate every paper
+    # from 1 and Crossref deposits the identical range -- on one real
+    # bibliography every one of 11 such warnings was a correct entry. When the
+    # entry resolves, validate_refs.py drops this finding if the registrar's own
+    # `page` agrees (see bibmeta.pages_match); the wording covers the unresolved
+    # case.
     if pages and re.fullmatch(r"\s*1\s*(--?|–)\s*\d+\s*", pages):
         out.append(
-            Finding(P4_STYLE, key, "page range starts at 1 — often placeholder pages",
+            Finding(P4_STYLE, key, PAGE_ONE_SUMMARY,
                     f"pages = {{{pages}}}",
-                    "confirm against the published version; for e-proceedings use 12:1--12:10, "
-                    "otherwise omit pages")
+                    "correct for article-numbered journals; otherwise confirm against the "
+                    "registrar, use 12:1--12:10 for e-proceedings, or omit pages")
         )
 
     doi = fields.get("doi", "")

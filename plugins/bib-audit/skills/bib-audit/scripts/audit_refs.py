@@ -73,6 +73,7 @@ from bibmeta import (
     crossref_by_doi,
     crossref_candidates,
     datacite_by_doi,
+    dead_identifier_hint,
     default_mailto,
     family_keys,
     http_get,
@@ -405,9 +406,13 @@ def main() -> int:
 
         if dead:
             fabricated += 1
+            hint = dead_identifier_hint(dead)
             print(f"[FABRICATED] {label}: {dead} names no paper")
+            if hint:
+                print(f"    - {hint}")
             findings.append(Finding(P2_FABRICATED, f"ref {label}", f"{dead} names no paper",
-                                    shown, "correct the identifier, never the title"))
+                                    f"{shown}\n{hint}" if hint else shown,
+                                    "correct the identifier, never the title"))
             continue
         if rec is None:
             kind = (ref.get("kind") or "article").lower()

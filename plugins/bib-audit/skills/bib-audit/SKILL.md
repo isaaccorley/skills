@@ -27,7 +27,12 @@ A `.bib` file is already structured, so there's no parsing step:
 ```bash
 python3 scripts/validate_refs.py path/to/refs.bib
 python3 scripts/validate_refs.py refs.bib --key somekey2024 --show-bibtex
+python3 scripts/validate_refs.py library.bib --aux paper.aux   # only what the paper cites
 ```
+
+`--aux` is how you scope a large shared library (a 2,196-entry `.bib` behind a 191-citation dissertation, say) to the entries actually cited: it reads the `\citation{}` lines from the LaTeX `.aux` and also reports keys cited but absent from the bib. If you build a cited-only subset some other way, compare keys case-insensitively, since classic BibTeX does (`iverson:1962:apl` and `Iverson:1962:APL` are the same key, and a naive filter silently dropped three cited entries on a real run). `--key` is case-insensitive for the same reason.
+
+Grey literature is recognised from the entry type. `@book`, `@misc`, `@manual`, `@techreport`, `@mastersthesis`, `@phdthesis`, `@unpublished` and `@booklet` entries that carry no identifier and don't turn up in a title search are reported `[UNVERIFIABLE]` at P3, the same routing the PDF path gets from `kind`. Before that, two editions of *Introduction to Algorithms* and *The Fellowship of the Ring* were sitting in P1 as works that "may not exist", and P1 is the tier you're told to read first and raise with an editor, so filling it with correctly cited books trains the reader to skim it. An `@misc` that's really an arXiv preprint still resolves through its eprint ID first, so this only ever applies to entries nothing could find.
 
 A PDF takes three steps, and step 2 is yours rather than a regex's:
 
@@ -50,7 +55,7 @@ This also matches what the APIs want. Semantic Scholar's [title matcher](https:/
 
 The legacy path (`scripts/resolve_refs.py` + `scripts/refparse.py`) does the parsing with heuristics instead. Keep it only for CI gates and other non-interactive runs where no extraction step is available. Every finding it emits is capped at P3 (advisory) and labelled PROVISIONAL, and it cannot print `[FABRICATED]` at all, it says `[SUSPECT]` instead. That cap is structural rather than stylistic: this path's parsing is what produced every false fabrication verdict found in testing, and it silently *drops* text on author-year bibliographies (a capitalised continuation line reads as a new reference, and one real paper lost 26% of its list). An unreliable parser must not put an integrity-shaped accusation next to somebody's name. It still exits non-zero, so the CI gate works. Prefer `audit_refs.py` whenever you need a verdict you can defend.
 
-Both are stdlib-only (no deps) and read-only, so they never edit your files. Both exit 1 on fabricated identifiers or authoritative mismatches, so either works as a CI/pre-submission gate. For layout, `scripts/refparse.py` turns messy extracted text into clean reference strings, `scripts/bibmeta.py` does all API resolution, and `scripts/lookup_id.py` finds the identifier for a single paper.
+Both are stdlib-only (no deps) and read-only, so they never edit your files. Both exit 1 on fabricated identifiers or authoritative mismatches, so either works as a CI/pre-submission gate. For layout, `scripts/refparse.py` turns messy extracted text into clean reference strings, `scripts/bibmeta.py` does all API resolution, and `scripts/lookup_id.py` finds the identifier for a single paper. If you script against `bibmeta` directly, every lookup takes `mailto` as an optional argument (`crossref_by_doi(doi)` works and falls back to `BIB_AUDIT_MAILTO`) and returns a `Record` dataclass with `title`, `families`, `years`, `doi`, `venue`, `pages` and a dict-style `.get()`; the fields are listed in [references/metadata-apis.md](references/metadata-apis.md#one-liners).
 
 Two optional environment variables, both read from the environment only (never CLI flags, so a key can't land in shell history or a pasted bug report):
 
@@ -119,7 +124,7 @@ One thing the PDF path can't do, by design, is detect author truncation. Referen
 | `[CHECK]` (preprint vs published) | arXiv-resolved entry differs on year/authors — preprints legitimately differ from camera-ready | Usually the bib is right; confirm against the published venue |
 | `[UNRESOLVED]` | No DOI/arXiv ID and no close title match | Add an identifier (see workflow); web specs/`@misc` URLs stay unresolved by design |
 | `[LOOKUP FAILED]` | Rate limit or API outage | Not a finding at all — re-run those entries |
-| `[UNVERIFIABLE]` | Grey literature (`kind` ≠ `article`) or anonymized for blind review | Expected. Check the URL resolves; never a fabrication signal |
+| `[UNVERIFIABLE]` | Grey literature (`kind` ≠ `article` on the PDF path; `@book`/`@misc`/`@manual`/thesis/report entry types on the `.bib` path) or anonymized for blind review | Expected. Check the URL resolves; never a fabrication signal |
 
 ## Priority order for fixing
 
@@ -134,7 +139,7 @@ Both scripts print the per-reference log first, then a ranked findings section g
 
 The P2/P3 boundary is the one worth internalizing, since an identifier naming no paper and an author who isn't on the paper are different in kind from a truncated author list. In a review they belong in different paragraphs, and in your own paper, different work sessions.
 
-P4 findings are checked mechanically by `scripts/bibstyle.py` on the `.bib` path: single-hyphen page ranges, all-entries-start-at-page-1, DOI stored as a URL, `url` duplicating `doi`, spelled-out months, double-braced titles, ALL-CAPS titles, `J.D.` initials, and entries with no identifier at all. These are the rules a human reviewer never has patience to check across sixty entries.
+P4 findings are checked mechanically by `scripts/bibstyle.py` on the `.bib` path: single-hyphen page ranges, page ranges starting at 1, DOI stored as a URL, `url` duplicating `doi`, spelled-out months, double-braced titles, ALL-CAPS titles, and `J.D.` initials. These are the rules a human reviewer never has patience to check across sixty entries. The page-1 check is a prompt, not a verdict, and it's withdrawn when the registrar deposits the same range or an article number, because article-numbered journals (PACMPL/OOPSLA, TOG, PNAS) genuinely paginate every paper from 1. On one real bibliography all 11 such warnings were correct entries that Crossref agreed with, and the reader nearly deleted the page ranges on the strength of the old "often placeholder pages" wording.
 
 ### The "and others" tell
 
@@ -149,7 +154,7 @@ Severity is deliberately asymmetric. Only a dead identifier or a badly wrong tit
 An LLM-drafted bibliography doesn't just get fields wrong, it invents DOIs, arXiv IDs, co-authors, and occasionally whole papers. Fabrication is nastier than ordinary error because a well-formed identifier makes an entry *look* verified. Four shapes, worst first:
 
 1. Identifier resolves, but to a different paper. Syntactically valid, HTTP 200, wrong work. Shows up as `[MISMATCH]` with a title diff on a DOI-resolved entry. Treat any such title diff as a fabricated DOI until proven otherwise, and fix the identifier rather than the title, because editing the bib title to match a wrong DOI is how a fake citation becomes permanent. Re-resolve from the title with `lookup_id.py`, confirm first author + year by eye, replace the identifier.
-2. Identifier doesn't resolve at all. Dead DOI (404 from Crossref) or an arXiv ID with no record. Both scripts report this as `[FABRICATED]` and name the identifier, keeping it distinct from `[UNRESOLVED]`, which means the entry never claimed an identifier in the first place. That distinction is the whole point, because "you forgot a DOI" is housekeeping while "your DOI is fake" is a retraction-grade problem. Note the two arXiv shapes, where a well-formed-but-nonexistent ID returns zero results while a *malformed* ID returns a record titled `Error`, and both are treated as naming no paper rather than as a title mismatch against the literal string "Error".
+2. Identifier doesn't resolve at all. Dead DOI (404 from Crossref) or an arXiv ID with no record. Both scripts report this as `[FABRICATED]` and name the identifier, keeping it distinct from `[UNRESOLVED]`, which means the entry never claimed an identifier in the first place. That distinction is the whole point, because "you forgot a DOI" is housekeeping while "your DOI is fake" is a retraction-grade problem. Note the two arXiv shapes, where a well-formed-but-nonexistent ID returns zero results while a *malformed* ID returns a record titled `Error`, and both are treated as naming no paper rather than as a title mismatch against the literal string "Error". One dead-DOI shape has an innocent cause worth knowing: `10.5555/*` is Crossref's internal prefix, which the ACM Digital Library displays for works it hosts without a registered DOI, and citation managers copy it into bibs. It's never valid and never will resolve, but the paper usually exists; the scripts print that explanation next to the verdict so it isn't read as an invented paper.
 3. Real paper, invented authors. Plausible co-authors grafted onto a genuine work. The tell is `authors in bib but not api`, an *extra* surname the registrar doesn't have. This is worse than the truncation case (`authors in api but not bib`), because truncation shortchanges people while fabrication credits them for work they didn't do, and reviewers notice when it's their own name.
 4. The paper doesn't exist. Confident title, real-sounding venue, no record anywhere. The signal is a title search missing across Crossref *and* OpenAlex *and* arXiv (see [references/metadata-apis.md](references/metadata-apis.md)), where one source missing means nothing but all three missing on a supposedly-published paper means invented. Delete the entry and the claim it supports, and don't go hunting for a real paper to swap in without re-reading what the sentence asserts.
 
@@ -193,6 +198,7 @@ For API endpoints, curl one-liners, source ranking, and per-source caveats, read
 
 ## Non-obvious gotchas (each cost real debugging time)
 
+- **Crossref fields are plural; `[0]` lies.** `title` and `subtitle` are separate elements for many ACM/IEEE papers (`ExTensor` / `An Accelerator for Sparse Tensor Algebra`), so comparing `title[0]` alone reports a 0.28 mismatch on a correct entry, and `container-title[0]` is the series (`Lecture Notes in Computer Science`) for Springer volumes, with the conference at `[1]`. `bibmeta` joins title+subtitle and picks the longest container title; 28 of 41 P3 findings on one real run were this. Details in [references/metadata-apis.md](references/metadata-apis.md#per-source-caveats).
 - **arXiv DOIs 404 on Crossref.** `10.48550/arXiv.*` = DataCite-registered; route to the arXiv API (script does this).
 - **Preprint ≠ published.** arXiv year = v1 year (AdamW: 2017 preprint vs ICLR 2019); v1 author lists can differ from camera-ready (MS COCO: 10 vs 8). Never hard-fail these.
 - **Title-search false binds.** Crossref fuzzy search confidently returns the wrong paper ("U-Net" matched a 2017 single-author work). Search hits advisory only — pin with an identifier before trusting any diff.
@@ -226,7 +232,7 @@ Field-authoring rules for when you must hand-touch an entry anyway. Sourced from
 - Author names exactly as printed on the paper, capitalization, diacritics and all. Initials space-separated: `J. D. Owens`, never `J.D.` (BibTeX reads that as one first name, so abbreviated styles emit only "J."). Hyphenated names with lowercase second half: `Wu-{chun} Feng`, `Wen{-mei} Hwu`.
 - Titles as printed; the style enforces case. Brace only must-capitalize words (`{L}oop`, since it's a surname, plus acronyms and proper names). Rewrite all-caps titles from publishers in title case. Never double-brace the whole title.
 - Months as BibTeX macros, unquoted: `month = mar`, `month = jun # "\slash " # jul`, `month = "18~" # dec`, which lets the style pick "Jan."/"January"/"1/". Include the month when it disambiguates same-year papers.
-- Pages always, en-dash: `35--49`. Electronic proceedings get `12:1--12:10` (paper 12, 10 pages). Every entry starting at page 1 means the pages are fake, so omit them instead.
+- Pages always, en-dash: `35--49`. Electronic proceedings get `12:1--12:10` (paper 12, 10 pages). *Every* entry starting at page 1 means the pages were authored, so omit them, but an individual `1--29` on an article-numbered journal (PACMPL, TOG, PNAS) is what the publisher deposits, so confirm against the registrar before deleting it.
 - Record a DOI in every entry that has one, even when your style doesn't print it. An unused `doi` field costs nothing in the PDF and is what makes the entry re-verifiable later, the difference between an entry this audit can pin authoritatively and one it can only fuzzy-match. Same argument for keeping `eprint` on preprint-only works.
 - DOI = number only (`10.1109/IVS.2011.5940539`), never the `dx.doi.org` URL. Don't duplicate the DOI in `url`.
 - URLs in `\url{}` (`\usepackage{url}`) so they wrap.

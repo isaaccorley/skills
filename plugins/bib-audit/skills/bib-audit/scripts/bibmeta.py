@@ -70,6 +70,72 @@ class Record:
     # matter how well the titles score, and the type says so in one field.
     ctype: str = ""
     venue: str = ""
+    # Every `container-title` element Crossref deposited. Springer LNCS/IFIP
+    # volumes carry TWO: ['Lecture Notes in Computer Science', 'Advances in
+    # Cryptology - EUROCRYPT 2004']. `venue` is the most specific one (longest);
+    # this keeps the rest for callers that want to show or search them all.
+    venues: list[str] = field(default_factory=list)
+    # Registrar-deposited page range and article number, when present. Used to
+    # confirm a bib's `pages = {1--29}`: PACMPL/OOPSLA and other
+    # article-numbered journals genuinely paginate from 1 within each article,
+    # and Crossref deposits that same range.
+    pages: str | None = None
+    article_number: str | None = None
+
+    def get(self, key: str, default=None):
+        """Dict-style access, so ``rec.get("title")`` works like it does on a
+        Crossref message. Fields are also plain attributes (``rec.title``)."""
+        return getattr(self, key, default)
+
+
+def mailto_or_default(mailto: str | None) -> str:
+    """Resolve the polite-pool contact: an explicit value, else ``BIB_AUDIT_MAILTO``.
+
+    Every lookup function takes ``mailto`` as an optional argument so that
+    ``crossref_by_doi(doi)`` works from a REPL or a one-off script. The docs
+    describe the address as optional and environment-only; a required positional
+    argument contradicted that and raised ``TypeError`` on the obvious call.
+    """
+    return mailto if mailto is not None else default_mailto()
+
+
+def join_title_subtitle(titles: list[str], subtitles: list[str]) -> str:
+    """Crossref's ``title`` + ``subtitle`` as one string, the way the paper prints it.
+
+    Many ACM/IEEE proceedings deposit the pre-colon text as ``title`` and the
+    rest as a separate ``subtitle`` element:
+
+        title=['ExTensor']  subtitle=['An Accelerator for Sparse Tensor Algebra']
+
+    Reading ``title[0]`` alone compares the bib's full title against the word
+    "ExTensor", scores 0.28, and reports a title mismatch on a correct entry --
+    28 of 41 P3 findings on one real bibliography, and the exact shape that the
+    DOI-resolved escalation rule would call [FABRICATED]. The subtitle is skipped
+    when the title already contains it, since some publishers deposit both.
+    """
+    title = " ".join((titles[0] if titles else "").split())
+    sub = " ".join((subtitles[0] if subtitles else "").split())
+    if not sub or not title:
+        return title or sub
+    if norm_text(sub) in norm_text(title):
+        return title
+    sep = "" if title.rstrip().endswith((":", "?", "!", "-", "—", "–")) else ":"
+    return f"{title.rstrip()}{sep} {sub}"
+
+
+def pick_venue(container_titles: list[str]) -> str:
+    """The most specific container title: the LONGEST element, not ``[0]``.
+
+    For Springer LNCS and IFIP volumes ``container-title`` is a two-element
+    array whose first element is the series ('Lecture Notes in Computer
+    Science') and whose second is the actual volume/conference. The series name
+    is nearly content-free -- LNCS carries thousands of unrelated conferences a
+    year -- and reading it led to a report claiming Crossref had lost the
+    conference name when it had not. Crossref documents no ordering, so pick by
+    length rather than position.
+    """
+    cleaned = [" ".join(c.split()) for c in container_titles if c and c.strip()]
+    return max(cleaned, key=len) if cleaned else ""
 
 
 # Letters that do NOT decompose under NFKD. Without an explicit mapping they
@@ -308,7 +374,8 @@ def http_get(
 
 
 def crossref_to_record(msg: dict, source: str) -> Record:
-    titles = msg.get("title") or [""]
+    title = join_title_subtitle(msg.get("title") or [], msg.get("subtitle") or [])
+    containers = [c for c in (msg.get("container-title") or []) if c]
     authors = msg.get("author") or []
     families = [family_key(a["family"]) for a in authors if a.get("family")]
     years: list[str] = []
@@ -320,28 +387,35 @@ def crossref_to_record(msg: dict, source: str) -> Record:
                 years.append(y)
     return Record(
         source=source,
-        title=titles[0],
+        title=title,
         families=families,
         year=years[0] if years else None,
         doi=msg.get("DOI"),
         years=years,
         ctype=(msg.get("type") or "").strip().lower(),
-        venue=next(iter(msg.get("container-title") or []), ""),
+        venue=pick_venue(containers),
+        venues=containers,
+        pages=(msg.get("page") or "").strip() or None,
+        article_number=(str(msg.get("article-number") or "")).strip() or None,
     )
 
 
-def crossref_by_doi(doi: str, mailto: str) -> Record:
+def crossref_by_doi(doi: str, mailto: str | None = None) -> Record:
+    mailto = mailto_or_default(mailto)
     url = f"{CROSSREF_WORKS}/{urllib.parse.quote(doi)}"
     msg = json.loads(http_get(url, "application/json", mailto))["message"]
     return crossref_to_record(msg, source="crossref:doi")
 
 
-def crossref_search(title: str, mailto: str, accept_ratio: float = TITLE_ACCEPT_RATIO) -> Record | None:
+def crossref_search(
+    title: str, mailto: str | None = None, accept_ratio: float = TITLE_ACCEPT_RATIO
+) -> Record | None:
     """Bind a title (or a whole raw reference string) to a Crossref work.
 
     Returns None when the top hit isn't a close enough title match, so we never
     silently bind an entry to the wrong paper.
     """
+    mailto = mailto_or_default(mailto)
     params = urllib.parse.urlencode({"query.bibliographic": title, "rows": "1"})
     items = json.loads(http_get(f"{CROSSREF_WORKS}?{params}", "application/json", mailto))[
         "message"
@@ -354,8 +428,9 @@ def crossref_search(title: str, mailto: str, accept_ratio: float = TITLE_ACCEPT_
     return rec
 
 
-def crossref_candidates(query: str, mailto: str, rows: int = 3) -> list[Record]:
+def crossref_candidates(query: str, mailto: str | None = None, rows: int = 3) -> list[Record]:
     """Top-N Crossref hits, unfiltered — for advisory display, not binding."""
+    mailto = mailto_or_default(mailto)
     params = urllib.parse.urlencode({"query.bibliographic": query, "rows": str(rows)})
     items = json.loads(http_get(f"{CROSSREF_WORKS}?{params}", "application/json", mailto))[
         "message"
@@ -363,7 +438,8 @@ def crossref_candidates(query: str, mailto: str, rows: int = 3) -> list[Record]:
     return [crossref_to_record(it, source="crossref:search") for it in items]
 
 
-def arxiv_by_id(arxiv_id: str, mailto: str) -> Record | None:
+def arxiv_by_id(arxiv_id: str, mailto: str | None = None) -> Record | None:
+    mailto = mailto_or_default(mailto)
     params = urllib.parse.urlencode({"id_list": arxiv_id})
     xml_text = http_get(f"{ARXIV_API}?{params}", "application/atom+xml", mailto)
     entry = ET.fromstring(xml_text).find("a:entry", ARXIV_NS)
@@ -396,7 +472,7 @@ def arxiv_by_id(arxiv_id: str, mailto: str) -> Record | None:
 S2_BATCH = "https://api.semanticscholar.org/graph/v1/paper/batch"
 
 
-def s2_batch(ids: list[str], mailto: str) -> list[dict | None]:
+def s2_batch(ids: list[str], mailto: str | None = None) -> list[dict | None]:
     """Look up many papers in ONE request. Returns results in request order.
 
     ``ids`` are prefixed identifiers: ``DOI:10.1109/...``, ``ARXIV:1711.05101``.
@@ -410,6 +486,7 @@ def s2_batch(ids: list[str], mailto: str) -> list[dict | None]:
     Decay Regularization"), so treat a title disagreement here as a signal to
     re-check against the registrar, never as a finding on its own.
     """
+    mailto = mailto_or_default(mailto)
     if not ids:
         return []
     body = json.dumps({"ids": ids}).encode()
@@ -433,7 +510,7 @@ def s2_batch(ids: list[str], mailto: str) -> list[dict | None]:
     return payload
 
 
-def datacite_by_doi(doi: str, mailto: str) -> Record | None:
+def datacite_by_doi(doi: str, mailto: str | None = None) -> Record | None:
     """Resolve a DOI that Crossref does not hold.
 
     Crossref only carries DOIs registered through Crossref. Zenodo datasets
@@ -442,6 +519,7 @@ def datacite_by_doi(doi: str, mailto: str) -> Record | None:
     paper" is a false fabrication finding, and data-descriptor citations are
     common in exactly the remote-sensing papers this skill gets pointed at.
     """
+    mailto = mailto_or_default(mailto)
     url = f"https://api.datacite.org/dois/{urllib.parse.quote(doi)}"
     try:
         attrs = json.loads(http_get(url, "application/json", mailto))["data"]["attributes"]
@@ -467,13 +545,14 @@ def datacite_by_doi(doi: str, mailto: str) -> Record | None:
     )
 
 
-def arxiv_search_title(title: str, mailto: str) -> Record | None:
+def arxiv_search_title(title: str, mailto: str | None = None) -> Record | None:
     """Find an arXiv record by title.
 
     Needed because a large share of ML references are arXiv-only preprints with
     no DOI: Crossref simply does not hold them, and treating a Crossref miss as
     "this paper does not exist" is how a real preprint gets called invented.
     """
+    mailto = mailto_or_default(mailto)
     query = urllib.parse.urlencode(
         {"search_query": f'ti:"{title}"', "max_results": "1"}
     )
@@ -503,12 +582,13 @@ def arxiv_search_title(title: str, mailto: str) -> Record | None:
     )
 
 
-def openalex_search(title: str, mailto: str) -> Record | None:
+def openalex_search(title: str, mailto: str | None = None) -> Record | None:
     """Find a work in OpenAlex — broadest coverage, includes preprints.
 
     Last resort before declaring a reference unfindable. A hit here on a paper
     Crossref and arXiv both missed still means the paper is real.
     """
+    mailto = mailto_or_default(mailto)
     params = {"search": title, "per-page": "1"}
     if mailto:
         params["mailto"] = mailto
@@ -537,7 +617,51 @@ def openalex_search(title: str, mailto: str) -> Record | None:
     )
 
 
-def canonical_bibtex_from_doi(doi: str, key: str, mailto: str) -> str:
+def canonical_bibtex_from_doi(doi: str, key: str, mailto: str | None = None) -> str:
     """Publisher BibTeX via doi.org content negotiation, rekeyed to ``key``."""
+    mailto = mailto_or_default(mailto)
     raw = http_get(DOI_NEGOTIATE.format(doi=doi), "application/x-bibtex", mailto).strip()
     return re.sub(r"^@(\w+)\s*\{[^,]+,", rf"@\1{{{key},", raw, count=1)
+
+
+# Crossref's own internal/test prefix. The ACM Digital Library displays
+# 10.5555/<id> "DOIs" for works that were never registered (NIPS proceedings
+# volumes, some workshop papers), and citation managers copy them into bibs.
+# They resolve nowhere and never will: Crossref confirmed the prefix is theirs
+# and ACM should not be showing it. Not a lookup failure, and not evidence the
+# paper is invented -- the identifier is simply not a DOI.
+NEVER_VALID_DOI_PREFIXES = ("10.5555/",)
+
+
+def dead_identifier_hint(identifier: str) -> str | None:
+    """Extra context for a dead identifier whose failure has a known cause."""
+    doi = identifier.removeprefix("doi:").strip()
+    if doi.lower().startswith(NEVER_VALID_DOI_PREFIXES):
+        return (
+            "10.5555/* is Crossref's internal prefix, displayed by the ACM DL but never "
+            "registered; the paper may be real, but this string is not its DOI -- find the "
+            "venue's real DOI or drop the field"
+        )
+    return None
+
+
+def pages_match(bib_pages: str, rec: Record) -> bool:
+    """Does the registrar confirm the bib's page range?
+
+    True when Crossref deposited the identical range, or when the work carries an
+    ``article-number`` (article-numbered journals paginate every paper from 1).
+    Either way a ``pages = {1--29}`` is what the publisher says, not a
+    placeholder, and the "starts at page 1" style warning must stay quiet.
+    """
+    if rec.article_number:
+        return True
+    if not rec.pages or not bib_pages:
+        return False
+    return norm_pages(bib_pages) == norm_pages(rec.pages)
+
+
+def norm_pages(pages: str) -> str:
+    """``1--29``, ``1–29``, ``1 - 29`` and ``1-29`` all compare equal."""
+    text = pages.replace("–", "-").replace("—", "-")
+    text = re.sub(r"-+", "-", text)
+    return re.sub(r"\s+", "", text).lower()

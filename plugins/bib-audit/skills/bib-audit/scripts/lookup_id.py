@@ -26,6 +26,8 @@ import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 
+from bibmeta import join_title_subtitle, pick_venue
+
 ARXIV_NS = {"a": "http://www.w3.org/2005/Atom"}
 MAILTO = os.environ.get("BIB_AUDIT_MAILTO", "")
 
@@ -55,7 +57,9 @@ def crossref_candidates(title: str, author: str | None, rows: int) -> None:
     items = json.loads(http_get(url))["message"]["items"]
     print(f"== Crossref ({len(items)} candidates) ==")
     for w in items:
-        t = (w.get("title") or ["?"])[0]
+        # title + subtitle, and the most specific container-title -- see
+        # bibmeta.join_title_subtitle / pick_venue for why [0] alone misleads.
+        t = join_title_subtitle(w.get("title") or [], w.get("subtitle") or []) or "?"
         authors = w.get("author") or []
         first = (
             f"{authors[0].get('family', '?')}, {authors[0].get('given', '')}".strip(", ")
@@ -68,10 +72,10 @@ def crossref_candidates(title: str, author: str | None, rows: int) -> None:
             if parts and parts[0] and parts[0][0]:
                 year = parts[0][0]
                 break
-        venue = w.get("container-title") or ["?"]
+        venue = pick_venue(w.get("container-title") or []) or "?"
         print(f"  doi:{w['DOI']}")
         print(f"    {t}")
-        print(f"    {first} et al. ({year}) -- {venue[0]} -- {len(authors)} authors")
+        print(f"    {first} et al. ({year}) -- {venue} -- {len(authors)} authors")
 
 
 def arxiv_parse(xml_text: str) -> None:

@@ -23,15 +23,27 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
 from audit_refs import bind_is_credible, type_is_plausible  # noqa: E402
 from bibmeta import (  # noqa: E402
+    TITLE_MATCH_RATIO,
     Record,
+    crossref_by_doi,
+    crossref_to_record,
+    dead_identifier_hint,
     delatex,
     family_key,
     family_keys,
+    join_title_subtitle,
     norm_text,
+    pages_match,
+    pick_venue,
     title_coverage,
     title_ratio,
 )
-from bibstyle import author_list_tells, generation_signal, style_findings  # noqa: E402
+from bibstyle import (  # noqa: E402
+    PAGE_ONE_SUMMARY,
+    author_list_tells,
+    generation_signal,
+    style_findings,
+)
 from refparse import (  # noqa: E402
     detect_marker,
     dewrap,
@@ -45,8 +57,12 @@ from refparse import (  # noqa: E402
 from triage import P1_INVENTED, P2_FABRICATED, P4_STYLE, Finding, render_ranked  # noqa: E402
 from validate_refs import (  # noqa: E402
     Entry,
+    cited_keys_from_aux,
+    compare,
     detect_arxiv_id,
+    fold_key,
     parse_authors_bibtex,
+    parse_bibtex,
     parse_fields,
     unescape_identifier,
 )
@@ -163,6 +179,153 @@ class TestTitleComparison(unittest.TestCase):
 
     def test_case_and_punctuation_insensitive(self):
         self.assertGreater(title_ratio("Attention Is All You Need", "attention is all you need!"), 0.98)
+
+
+class TestCrossrefPluralFields(unittest.TestCase):
+    """Three of the four false-positive classes in a 191-reference dissertation
+    audit came from reading ONE element of a Crossref field that is plural in
+    practice: `title` without `subtitle`, and `container-title[0]` without `[1]`.
+    """
+
+    def test_subtitle_is_joined_to_title(self):
+        # Crossref returns title=['ExTensor'] subtitle=['An Accelerator for
+        # Sparse Tensor Algebra'] for 10.1145/3352460.3358275. Comparing the bib's
+        # full title against "ExTensor" alone scored 0.28 -- 28 of 41 P3 findings
+        # on one run, and the shape the DOI-resolved rule escalates to
+        # [FABRICATED].
+        msg = {"title": ["ExTensor"], "subtitle": ["An Accelerator for Sparse Tensor Algebra"]}
+        rec = crossref_to_record(msg, "crossref:doi")
+        bib = "ExTensor: An Accelerator for Sparse Tensor Algebra"
+        self.assertGreaterEqual(title_ratio(bib, rec.title), TITLE_MATCH_RATIO)
+        entry = Entry("k", "inproceedings", {"title": bib}, "")
+        self.assertFalse([k for k, _ in compare(entry, rec) if k == "title"])
+
+    def test_subtitle_already_in_title_is_not_duplicated(self):
+        # Some publishers deposit the full title AND repeat the tail as subtitle.
+        joined = join_title_subtitle(["U-Net: Convolutional Networks"], ["Convolutional Networks"])
+        self.assertEqual(joined, "U-Net: Convolutional Networks")
+
+    def test_missing_subtitle_leaves_title_alone(self):
+        self.assertEqual(join_title_subtitle(["Attention is all you need"], []), "Attention is all you need")
+        self.assertEqual(join_title_subtitle([], []), "")
+
+    def test_title_ending_in_punctuation_gets_no_extra_colon(self):
+        self.assertEqual(join_title_subtitle(["Why?"], ["A study"]), "Why? A study")
+
+    def test_container_title_prefers_the_specific_element(self):
+        # Springer LNCS/IFIP: ['Lecture Notes in Computer Science', 'Advances in
+        # Cryptology - EUROCRYPT 2004']. [0] is the series, which is nearly
+        # content-free, and reading it produced a report claiming Crossref had
+        # lost the conference name.
+        containers = ["Lecture Notes in Computer Science", "Advances in Cryptology - EUROCRYPT 2004"]
+        self.assertEqual(pick_venue(containers), containers[1])
+        self.assertEqual(pick_venue(list(reversed(containers))), containers[1])
+        rec = crossref_to_record({"title": ["x"], "container-title": containers}, "crossref:doi")
+        self.assertEqual(rec.venue, containers[1])
+        self.assertEqual(rec.venues, containers)
+
+    def test_record_is_dict_like_for_reads(self):
+        # The return type was undocumented and had no .get(), so the first thing
+        # anyone tried in a REPL failed.
+        rec = Record("crossref:doi", "T", ["a"], "2020")
+        self.assertEqual(rec.get("title"), "T")
+        self.assertIsNone(rec.get("nonexistent"))
+
+    def test_mailto_is_optional_on_every_lookup(self):
+        # Docs say BIB_AUDIT_MAILTO is optional and environment-only; a required
+        # positional `mailto` contradicted that and crossref_by_doi(doi) raised
+        # TypeError.
+        import inspect
+        import bibmeta
+
+        for fn in (crossref_by_doi, bibmeta.crossref_search, bibmeta.arxiv_by_id,
+                   bibmeta.datacite_by_doi, bibmeta.arxiv_search_title,
+                   bibmeta.openalex_search, bibmeta.canonical_bibtex_from_doi):
+            param = inspect.signature(fn).parameters["mailto"]
+            self.assertIsNot(param.default, inspect.Parameter.empty, fn.__name__)
+
+
+class TestGreyLiteratureInBib(unittest.TestCase):
+    """The .bib path had no `kind`, so an unresolved @book landed in P1 as a work
+    that "may not exist" -- two editions of *Introduction to Algorithms* and *The
+    Fellowship of the Ring* among 18 of 24 P1 findings. The entry type already
+    says what kind of work it is.
+    """
+
+    def test_book_and_misc_are_grey(self):
+        for etype in ("book", "misc", "manual", "techreport", "mastersthesis",
+                      "phdthesis", "unpublished", "booklet"):
+            with self.subTest(etype=etype):
+                self.assertTrue(Entry("k", etype, {"title": "T"}, "").is_grey())
+
+    def test_paper_types_are_not_grey(self):
+        for etype in ("article", "inproceedings", "conference", "incollection"):
+            with self.subTest(etype=etype):
+                self.assertFalse(Entry("k", etype, {"title": "T"}, "").is_grey())
+
+    def test_entry_type_is_lowercased_by_the_parser(self):
+        entries = parse_bibtex("@Book{clrs, title={Introduction to Algorithms}, year={2009}}")
+        self.assertEqual(entries[0].etype, "book")
+        self.assertTrue(entries[0].is_grey())
+
+    def test_unresolved_grey_entry_is_never_p1(self):
+        # Structural: the P1 finding text must be reachable only past is_grey().
+        src = (Path(__file__).resolve().parent.parent / "scripts" / "validate_refs.py").read_text()
+        grey = src.index("if entry.is_grey():")
+        p1 = src.index("no match in Crossref or arXiv for this title")
+        self.assertLess(grey, p1)
+
+
+class TestPageOneWarning(unittest.TestCase):
+    """PACMPL/OOPSLA articles genuinely paginate from 1 and Crossref deposits the
+    identical range (10.1145/3133901 page=1-29). All 11 "starts at page 1"
+    warnings on one bibliography were correct entries; the reader nearly deleted
+    a dozen correct page ranges on the strength of it.
+    """
+
+    def test_registrar_agreement_suppresses(self):
+        rec = Record("crossref:doi", "T", [], "2017", pages="1-29")
+        self.assertTrue(pages_match("1--29", rec))
+        self.assertTrue(pages_match("1–29", rec))
+        self.assertTrue(pages_match("1 - 29", rec))
+
+    def test_article_number_suppresses(self):
+        rec = Record("crossref:doi", "T", [], "2017", article_number="42")
+        self.assertTrue(pages_match("1--30", rec))
+
+    def test_disagreement_or_no_registry_pages_keeps_the_warning(self):
+        self.assertFalse(pages_match("1--29", Record("crossref:doi", "T", [], "2017", pages="233-241")))
+        self.assertFalse(pages_match("1--29", Record("arxiv", "T", [], "2017")))
+
+    def test_warning_reads_as_a_prompt_not_a_verdict(self):
+        found = [f for f in style_findings("k", {"pages": "1--29"}) if f.summary == PAGE_ONE_SUMMARY]
+        self.assertEqual(len(found), 1)
+        self.assertNotIn("placeholder", found[0].summary)
+        self.assertIn("confirm", found[0].summary)
+
+
+class TestCitedKeyScoping(unittest.TestCase):
+    def test_keys_compare_case_insensitively(self):
+        # BibTeX resolves keys case-insensitively; a naive filter dropped
+        # iverson:1962:apl vs Iverson:1962:APL.
+        self.assertEqual(fold_key("Iverson:1962:APL"), fold_key("iverson:1962:apl"))
+
+    def test_aux_citations_parsed(self):
+        aux = "\\relax\n\\citation{Iverson:1962:APL,knuth}\n\\citation{lamport}\n\\abx@aux@cite{0}{biber-key}\n"
+        self.assertEqual(cited_keys_from_aux(aux), {"iverson:1962:apl", "knuth", "lamport", "biber-key"})
+
+
+class TestNeverValidPrefix(unittest.TestCase):
+    def test_10_5555_gets_the_explanation(self):
+        # Crossref confirmed 10.5555 is their internal prefix, displayed by the ACM
+        # DL and never registered. Not a lookup failure, not an invented paper.
+        hint = dead_identifier_hint("doi:10.5555/3295222.3295349")
+        self.assertIsNotNone(hint)
+        self.assertIn("never", hint)
+
+    def test_ordinary_dead_doi_has_no_hint(self):
+        self.assertIsNone(dead_identifier_hint("doi:10.1145/0000000.0000000"))
+        self.assertIsNone(dead_identifier_hint("arXiv:9999.99999"))
 
 
 class TestIdentifierExtraction(unittest.TestCase):
