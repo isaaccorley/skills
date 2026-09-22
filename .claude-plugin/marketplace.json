@@ -16,6 +16,14 @@
       "category": "productivity",
       "keywords": ["bibtex", "citations", "references", "latex", "peer-review", "hallucination"],
       "source": "./plugins/bib-audit"
+    },
+    {
+      "name": "research-paper-figures",
+      "version": "1.0.0",
+      "description": "Publication figures in TikZ/pgfplots and Python, with reusable serif styling, visual examples, and takeaway-first captions.",
+      "keywords": ["figures", "matplotlib", "tikz", "pgfplots", "latex", "research"],
+      "category": "productivity",
+      "source": "./plugins/research-paper-figures"
     }
   ]
 }

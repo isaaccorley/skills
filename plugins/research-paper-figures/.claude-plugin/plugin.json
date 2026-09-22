@@ -1,0 +1,14 @@
+{
+  "name": "research-paper-figures",
+  "version": "1.0.0",
+  "description": "Publication figures in TikZ/pgfplots and Python, with reusable serif styling, visual examples, and takeaway-first captions.",
+  "license": "MIT",
+  "keywords": [
+    "figures",
+    "matplotlib",
+    "tikz",
+    "pgfplots",
+    "latex",
+    "research"
+  ]
+}
