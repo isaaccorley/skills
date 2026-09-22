@@ -55,3 +55,22 @@ jobs:
           print("\n".join(fail) if fail else "manifests OK")
           sys.exit(1 if fail else 0)
           PY
+
+  figures:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Install figure dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y texlive-latex-extra texlive-fonts-recommended texlive-pictures poppler-utils fonts-liberation
+          python -m pip install -r plugins/research-paper-figures/skills/research-paper-figures/requirements.txt
+      - name: Test figure helpers and packaged examples
+        working-directory: plugins/research-paper-figures
+        run: python -m unittest discover -s tests -v
+      - name: Build the complete synthetic gallery
+        working-directory: plugins/research-paper-figures
+        run: python skills/research-paper-figures/scripts/build_gallery.py --output "$RUNNER_TEMP/figure-gallery"

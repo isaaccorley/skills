@@ -1,0 +1,53 @@
+% Input in the paper preamble. Figure text is Times; body fonts are untouched.
+\usepackage{pgfplots,pgfplotstable}
+\usetikzlibrary{positioning,arrows.meta,calc,backgrounds,fit,patterns}
+\usepgfplotslibrary{groupplots,fillbetween}
+\pgfplotsset{compat=1.18}
+\providecommand{\plotfont}{\fontfamily{ptm}\selectfont}
+\definecolor{coral}{HTML}{FF4F2C}
+\definecolor{brown}{HTML}{3B1E1C}
+\definecolor{periwinkle}{HTML}{80A0D8}
+\definecolor{ivory}{HTML}{F4F4EB}
+\definecolor{blue}{HTML}{4A78B5}
+\definecolor{green}{HTML}{3E9C7A}
+\definecolor{purple}{HTML}{9A7AB0}
+\definecolor{ochre}{HTML}{C9973F}
+\definecolor{rose}{HTML}{B5476B}
+\definecolor{olive}{HTML}{6E8B3D}
+\definecolor{teal}{HTML}{17707E}
+\definecolor{indigo}{HTML}{5B4B9E}
+\definecolor{rust}{HTML}{A8552A}
+\definecolor{gray}{HTML}{6E6E6E}
+\definecolor{ink}{HTML}{1A1A1A}
+\definecolor{soft}{HTML}{D8D3C6}
+\definecolor{protocolA}{HTML}{0E7A8D}
+\definecolor{protocolB}{HTML}{A23B72}
+\pgfplotsset{
+  paperaxis/.style={
+    width=0.97\linewidth,height=1.75in,font=\plotfont,
+    axis x line*=bottom,axis y line*=left,
+    axis line style={ink,line width=0.5pt},
+    tick align=outside,tick style={ink,line width=0.4pt},
+    tick label style={font=\fontsize{7}{8.4}\selectfont,ink},
+    label style={font=\fontsize{9}{10.8}\selectfont,ink},
+    title style={font=\fontsize{8.4}{10}\selectfont\bfseries,ink},
+    legend cell align=left,
+    legend style={font=\fontsize{7}{8.4}\selectfont,draw=none,fill=none,
+      inner sep=1pt,row sep=-1.5pt},
+    every axis plot/.append style={line width=0.9pt},clip mode=individual,
+  },
+  faintgrid/.style={ymajorgrids,grid style={soft,line width=0.35pt}},
+  zeroline/.style={soft,line width=0.6pt,forget plot},
+  focus/.style={coral,line width=1.1pt,mark=*,mark size=1.5pt},
+  comparison/.style={blue,dashed,mark=square,mark size=1.4pt,mark options={solid}},
+}
+\tikzset{
+  every picture/.append style={font=\plotfont},
+  fig/flow/.style={->,>={Stealth[length=3pt]},ink!70,line width=0.55pt},
+  fig/secondary/.style={->,>={Stealth[length=2.2pt]},ink!55,line width=0.4pt},
+  fig/box/.style={draw=ink!45,fill=soft!15,rounded corners=2pt,
+    line width=0.5pt,align=center,inner sep=4pt},
+  fig/group/.style={draw=ink!45,line width=0.5pt,rounded corners=2.5pt,dashed},
+  fig/tag/.style={fill=white,inner sep=1.5pt,font=\fontsize{7}{8.4}\selectfont},
+  fig/label/.style={font=\fontsize{6.5}{7.8}\selectfont,text=ink},
+}

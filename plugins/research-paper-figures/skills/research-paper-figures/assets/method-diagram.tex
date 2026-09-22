@@ -1,0 +1,56 @@
+% Generic two-stage schematic. Canvas 13.8 cm; adapt every operation to the method.
+\begin{tikzpicture}[x=1cm,y=1cm,font=\plotfont\fontsize{7}{8.4}\selectfont,ink]
+\path[use as bounding box] (0,-0.35) rectangle (13.8,4.3);
+\node[anchor=west,font=\fontsize{8}{9.6}\selectfont\bfseries] at (0,4.05) {(a) Representation learning};
+\node[anchor=west,font=\fontsize{8}{9.6}\selectfont\bfseries] at (0,1.55) {(b) Downstream inference};
+% Observations: a drawn stack, rather than a paragraph in a box.
+\foreach \dx/\dy in {0.12/0.12,0.06/0.06,0/0}{
+  \path[draw=blue!70,fill=blue!8,line width=0.45pt] (0.20+\dx,2.55+\dy) rectangle ++(1.05,0.72);
+}
+\foreach \x/\y in {.35/2.74,.58/2.96,.77/2.68,.96/3.11,1.08/2.91}{
+  \fill[blue] (\x,\y) circle[radius=.035];
+}
+\node[anchor=north] at (.79,2.43) {Samples};
+\draw[fig/flow] (1.43,2.98) -- (2.03,2.98);
+% Encoder with layers and a residual path.
+\path[fig/box] (2.10,2.40) rectangle (4.10,3.50);
+\foreach \y in {2.68,2.91,3.14}{
+  \path[draw=ink!45,fill=soft!35,line width=.4pt,rounded corners=1pt] (2.37,\y) rectangle ++(1.35,.13);
+}
+\draw[fig/secondary] (3.83,3.31) to[out=-50,in=50] (3.83,2.60);
+\node[anchor=north] at (3.10,2.27) {Encoder $f_\theta$};
+\draw[fig/flow] (4.18,2.98) -- (4.82,2.98);
+% Latent slots, highlighted contribution.
+\foreach \k in {0,...,6}{
+  \path[draw=coral!80,fill=coral!25,line width=.45pt] ({4.91+.25*\k},2.71) rectangle ++(.20,.55);
+}
+\node[anchor=north] at (5.76,2.48) {Latent features $\mathbf z$};
+\draw[fig/flow] (6.70,2.98) -- (7.36,2.98);
+\path[fig/box,fill=coral!7,draw=coral!65] (7.44,2.53) rectangle (9.42,3.39);
+\draw[coral,line width=.7pt] (7.77,2.76) -- (8.08,3.12) -- (8.4,2.85) -- (8.75,3.17) -- (9.08,2.94);
+\node[anchor=north] at (8.43,2.39) {Adaptive head $g_\phi$};
+\draw[fig/flow] (9.50,2.98) -- (10.18,2.98);
+\node[fig/box,fill=white,minimum width=1.65cm,minimum height=.62cm] (loss) at (11.05,2.98) {Loss $\mathcal L$};
+\node[fig/box,fill=green!7,draw=green!65,minimum width=1.65cm] (targets) at (11.05,3.84) {Targets $y$};
+\draw[fig/secondary] (targets.south) -- (loss.north);
+\node[align=center,font=\fontsize{6.5}{7.8}\selectfont,text=ink!65] at (12.85,2.98) {Update\\$\theta,\phi$};
+\draw[fig/secondary] (loss.east) -- (12.30,2.98);
+% Inference row: frozen computation, then predictions and uncertainty.
+\node[fig/box,fill=blue!8,draw=blue!60,minimum width=1.15cm,minimum height=.60cm] (query) at (.8,.65) {Query $x$};
+\path[fig/group] (2.10,.06) rectangle (7.15,1.23);
+\node[fig/tag] at (4.62,1.23) {Frozen model};
+\node[fig/box,minimum width=1.55cm,minimum height=.6cm] (enc) at (3.12,.65) {$f_\theta$};
+\node[fig/box,fill=coral!7,draw=coral!60,minimum width=1.55cm,minimum height=.6cm] (head) at (5.90,.65) {$g_\phi$};
+\draw[fig/flow] (query.east) -- (enc.west);
+\draw[fig/flow] (enc.east) -- node[above,fig/label] {$\mathbf z$} (head.west);
+\node[fig/box,fill=white,minimum width=1.70cm,minimum height=.60cm] (pred) at (9.07,.95) {Prediction $\hat y$};
+\node[fig/box,fill=white,minimum width=1.70cm,minimum height=.50cm] (unc) at (9.07,.12) {Uncertainty $s$};
+\draw[fig/flow] (head.east) -- (7.40,.65) to[out=0,in=180] (pred.west);
+\draw[fig/flow] (7.15,.65) to[out=0,in=180] (unc.west);
+% Tiny output plot glyph.
+\draw[ink!50,line width=.45pt] (11.0,.03) -- (11.0,1.19) (11.0,.03) -- (13.3,.03);
+\path[fill=coral!12] (11.18,.23) -- (11.7,.40) -- (12.3,.75) -- (13.1,.89) -- (13.1,1.08) -- (12.3,.96) -- (11.7,.68) -- (11.18,.52) -- cycle;
+\draw[coral,line width=.8pt] (11.18,.38) -- (11.7,.54) -- (12.3,.85) -- (13.1,.98);
+\draw[fig/flow] (pred.east) to[out=0,in=180] (10.80,.73);
+\draw[fig/secondary] (unc.east) to[out=0,in=180] (10.80,.38);
+\end{tikzpicture}
