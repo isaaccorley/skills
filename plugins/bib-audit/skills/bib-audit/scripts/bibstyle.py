@@ -90,7 +90,13 @@ def style_findings(key: str, fields: dict[str, str]) -> list[Finding]:
         )
 
     author = fields.get("author", "")
-    if re.search(r"\b[A-Z]\.[A-Z]\.", author):
+    # A brace-protected corporate author ({U.S. Census Bureau}) is printed
+    # verbatim and never split into initials, so "U.S." there is correct.
+    persons = " and ".join(
+        p for p in re.split(r"\s+and\s+", author)
+        if not (p.strip().startswith("{") and p.strip().endswith("}"))
+    )
+    if re.search(r"\b[A-Z]\.[A-Z]\.", persons):
         out.append(
             Finding(P4_STYLE, key, "initials not space-separated",
                     f"author = {{{author[:70]}}}",
@@ -138,7 +144,11 @@ def author_list_tells(key: str, author_field: str, api_author_count: int | None)
     else:
         out.append(
             Finding(
-                P3_METADATA,
+                # On a large-author paper this is a deliberate style choice, not
+                # wrong metadata. Ranked P3 it put 23 correct entries beside the
+                # one invented author in a real audit, and the real finding was
+                # lost in the list. authorcheck.py checks the listed prefix.
+                P4_STYLE,
                 key,
                 "'and others' truncates the author list",
                 f"entry lists {listed} author(s) explicitly",

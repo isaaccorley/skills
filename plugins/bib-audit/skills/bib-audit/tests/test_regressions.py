@@ -675,3 +675,82 @@ class TestTriageRendering(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestOrderedAuthorCheck(unittest.TestCase):
+    """Error shapes the family-name set comparison could not see. All three were
+    found in two submitted bibliographies that had passed the set comparison.
+    """
+
+    def setUp(self):
+        from authorcheck import compare_authors
+        self.compare = compare_authors
+
+    def test_invented_given_name_with_right_initial(self):
+        bib = ["Tuccillo, Joseph V.", "Trombley, Nicole", "Moehl, Jesse"]
+        api = [("Joseph", "Tuccillo"), ("Nathan", "Trombley"), ("Jessica", "Moehl")]
+        issues, same_initial = self.compare(bib, False, api)
+        self.assertEqual(same_initial, 2)
+        self.assertEqual([k for k, _ in issues], ["given", "given"])
+
+    def test_initials_and_middle_names_are_not_flagged(self):
+        bib = ["Shah, A. S. V.", "Baillie, J. Kenneth", "Ward, Tom J. C."]
+        api = [("Anoop S V", "Shah"), ("J Kenneth", "Baillie"), ("Tom J. C.", "Ward")]
+        self.assertEqual(self.compare(bib, False, api), ([], 0))
+
+    def test_swapped_order(self):
+        bib = ["Johnson, M.", "Ewing, M.", "Zalinger, B."]
+        api = [("Moira", "Johnson"), ("Benjamin", "Zalinger"), ("Maria", "Ewing")]
+        issues, _ = self.compare(bib, False, api)
+        self.assertTrue(any("order differs" in m for _, m in issues))
+
+    def test_silent_truncation(self):
+        bib = ["Kerr, Cliff C.", "Stuart, Robyn M."]
+        api = [("Cliff C.", "Kerr"), ("Robyn M.", "Stuart"), ("Dina", "Mistry")]
+        issues, _ = self.compare(bib, False, api)
+        self.assertTrue(any("no 'and others'" in m for _, m in issues))
+
+    def test_correct_and_others_prefix_is_silent(self):
+        bib = ["Kerr, Cliff C.", "Stuart, Robyn M."]
+        api = [("Cliff C.", "Kerr"), ("Robyn M.", "Stuart"), ("Dina", "Mistry")]
+        self.assertEqual(self.compare(bib, True, api), ([], 0))
+
+    def test_invented_author_is_flagged(self):
+        bib = ["Jastrz{e}bski, Micha{\\l}", "Iber, Amanda S."]
+        api = [("Michał", "Jastrzębski"), ("Amanda S.", "Izzo")]
+        issues, _ = self.compare(bib, False, api)
+        self.assertTrue(any("invented?" in m and "Iber" in m for _, m in issues))
+
+    def test_short_registry_deposit_is_not_invention(self):
+        bib = ["Aiken, Linda H.", "Clarke, Sean P.", "Sloane, Douglas M."]
+        api = [("Linda H.", "Aiken")]
+        issues, _ = self.compare(bib, False, api)
+        self.assertTrue(issues)
+        self.assertFalse(any("invented?" in m for _, m in issues))
+        self.assertTrue(any("incomplete deposit" in m for _, m in issues))
+
+    def test_repeated_surnames_pair_in_order(self):
+        bib = ["Robbins, Andrew M.", "Robbins, Martha M.", "Li, Binbin", "Li, Haibo"]
+        api = [("Andrew M.", "Robbins"), ("Martha M.", "Robbins"), ("Binbin", "Li"), ("Haibo", "Li")]
+        self.assertEqual(self.compare(bib, False, api), ([], 0))
+
+    def test_corporate_authors_are_skipped(self):
+        bib = ["Hardwick, Hayley E.", "{ISARIC4C Investigators}", "Visser, Leonardus G."]
+        api = [("Hayley E", "Hardwick"), ("Leonardus G", "Visser")]
+        self.assertEqual(self.compare(bib, False, api), ([], 0))
+        self.assertEqual(self.compare(["{CDC COVID-19 Response Team}"], False, api), ([], 0))
+
+    def test_volume_mismatch(self):
+        rec_ = Record(source="crossref:doi", title="Parallelization strategies", families=["cagigasmuniz"],
+                      year="2025", years=["2025"], authors=[("Daniel", "Cagigas-Muñiz")], volume="140")
+        entry = Entry("k", "article", {"title": "Parallelization strategies",
+                                       "author": "Cagigas-Mu{\\~n}iz, Daniel", "year": "2025",
+                                       "volume": "137"}, "")
+        from validate_refs import compare
+        self.assertEqual([k for k, _ in compare(entry, rec_)], ["volume"])
+
+    def test_corporate_author_initials_not_a_style_finding(self):
+        found = style_findings("k", {"author": "{U.S.\\ Census Bureau}"})
+        self.assertFalse(any("initials" in f.summary for f in found))
+        found = style_findings("k", {"author": "Owens, J.D. and {U.S.\\ Census Bureau}"})
+        self.assertTrue(any("initials" in f.summary for f in found))

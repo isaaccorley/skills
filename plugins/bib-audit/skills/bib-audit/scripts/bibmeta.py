@@ -81,6 +81,10 @@ class Record:
     # and Crossref deposits that same range.
     pages: str | None = None
     article_number: str | None = None
+    # Ordered (given, family) pairs as deposited, for the positional and
+    # given-name checks in authorcheck.py. Empty when the source lacks them.
+    authors: list[tuple[str, str]] = field(default_factory=list)
+    volume: str = ""
 
     def get(self, key: str, default=None):
         """Dict-style access, so ``rec.get("title")`` works like it does on a
@@ -378,6 +382,7 @@ def crossref_to_record(msg: dict, source: str) -> Record:
     containers = [c for c in (msg.get("container-title") or []) if c]
     authors = msg.get("author") or []
     families = [family_key(a["family"]) for a in authors if a.get("family")]
+    ordered = [(a.get("given", ""), a["family"]) for a in authors if a.get("family")]
     years: list[str] = []
     for key in ("published", "published-print", "published-online", "issued"):
         parts = msg.get(key, {}).get("date-parts")
@@ -397,6 +402,8 @@ def crossref_to_record(msg: dict, source: str) -> Record:
         venues=containers,
         pages=(msg.get("page") or "").strip() or None,
         article_number=(str(msg.get("article-number") or "")).strip() or None,
+        authors=ordered,
+        volume=str(msg.get("volume") or ""),
     )
 
 
@@ -454,10 +461,13 @@ def arxiv_by_id(arxiv_id: str, mailto: str | None = None) -> Record | None:
     if not title or title == "Error":
         return None
     families: list[str] = []
+    ordered: list[tuple[str, str]] = []
     for author in entry.findall("a:author", ARXIV_NS):
         name_el = author.find("a:name", ARXIV_NS)
         if name_el is not None and name_el.text:
             families.append(family_key(name_el.text))
+            toks = name_el.text.split()
+            ordered.append((" ".join(toks[:-1]), toks[-1]))
     published = entry.find("a:published", ARXIV_NS)
     year = published.text[:4] if published is not None and published.text else None
     return Record(
@@ -466,6 +476,7 @@ def arxiv_by_id(arxiv_id: str, mailto: str | None = None) -> Record | None:
         families=families,
         year=year,
         years=[year] if year else [],
+        authors=ordered,
     )
 
 
@@ -534,6 +545,11 @@ def datacite_by_doi(doi: str, mailto: str | None = None) -> Record | None:
         for c in (attrs.get("creators") or [])
         if c.get("familyName") or c.get("name")
     ]
+    ordered = [
+        (c.get("givenName") or "", c["familyName"])
+        for c in (attrs.get("creators") or [])
+        if c.get("familyName")
+    ]
     year = str(attrs["publicationYear"]) if attrs.get("publicationYear") else None
     return Record(
         source="datacite:doi",
@@ -542,6 +558,7 @@ def datacite_by_doi(doi: str, mailto: str | None = None) -> Record | None:
         year=year,
         doi=doi,
         years=[year] if year else [],
+        authors=ordered,
     )
 
 

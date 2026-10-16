@@ -53,6 +53,7 @@ from bibstyle import (
     generation_signal,
     style_findings,
 )
+from authorcheck import compare_authors
 from triage import P1_INVENTED, P2_FABRICATED, P3_METADATA, Finding, render_ranked
 
 from bibmeta import (
@@ -342,8 +343,19 @@ def resolve(entry: Entry, mailto: str) -> tuple[Record | None, str | None]:
 
 
 def compare(entry: Entry, rec: Record) -> list[tuple[str, str]]:
-    """Return (kind, message) issues; kind in {title, author, year}."""
+    """Return (kind, message) issues; kind in {title, author, given, year, volume}."""
+    return compare_full(entry, rec)[0]
+
+
+def compare_full(entry: Entry, rec: Record) -> tuple[list[tuple[str, str]], int]:
+    """``compare`` plus the count of same-initial given-name mismatches.
+
+    The count feeds a corpus-level signal: several given names that differ from
+    the record but share its initial are the trace of names expanded from an
+    initials-only source, and a reason to distrust every author field.
+    """
     issues: list[tuple[str, str]] = []
+    same_initial = 0
 
     bib_title = entry.fields.get("title", "")
     if bib_title and rec.title:
@@ -356,10 +368,18 @@ def compare(entry: Entry, rec: Record) -> list[tuple[str, str]]:
                 )
             )
 
-    bib_authors = parse_authors_bibtex(entry.fields.get("author", ""))
+    author_field = entry.fields.get("author", "")
+    bib_authors = parse_authors_bibtex(author_field)
     bib_fam = sorted(family_key(a) for a in bib_authors)
     api_fam = sorted(rec.families)
-    if rec.families and bib_fam != api_fam:
+    if rec.authors:
+        # Ordered, given-name-aware check. Also treats a correct 'and others'
+        # prefix as correct instead of reporting a count mismatch.
+        author_issues, same_initial = compare_authors(
+            bib_authors, bool(AND_OTHERS_RE.search(author_field)), rec.authors
+        )
+        issues.extend(author_issues)
+    elif rec.families and bib_fam != api_fam:
         if len(bib_fam) != len(api_fam):
             issues.append(
                 (
@@ -384,7 +404,11 @@ def compare(entry: Entry, rec: Record) -> list[tuple[str, str]]:
     if bib_year and api_years and bib_year not in api_years:
         issues.append(("year", f"year {bib_year} (bib) vs {'/'.join(api_years)} (api)"))
 
-    return issues
+    bib_vol = entry.fields.get("volume", "").strip()
+    if bib_vol and rec.volume and re.sub(r"\W", "", bib_vol) != re.sub(r"\W", "", rec.volume):
+        issues.append(("volume", f"volume {bib_vol} (bib) vs {rec.volume} (api)"))
+
+    return issues, same_initial
 
 
 def canonical_bibtex(entry: Entry, rec: Record, mailto: str) -> str | None:
@@ -455,6 +479,7 @@ def main() -> int:
     flagged: list[tuple[Entry, Record]] = []
     findings: list[Finding] = []
     and_others: list[str] = []
+    expanded: list[tuple[str, int]] = []
 
     for idx, entry in enumerate(entries):
         if idx:
@@ -517,7 +542,7 @@ def main() -> int:
                 "search the exact title in a browser before acting"))
             continue
 
-        issues = compare(entry, rec)
+        issues, same_initial = compare_full(entry, rec)
         # A record bound by fuzzy title search is NOT authoritative. Crossref
         # accepted an R package named "madgrad" for Adam (ratio 0.879) and
         # "Is Attention All You Need?" for the Transformer paper (0.880) — after
@@ -527,12 +552,14 @@ def main() -> int:
         # meaningful once an identifier pins the work.
         pinned = rec.source in {"crossref:doi", "datacite:doi", "arxiv"}
         if not pinned:
-            issues = [(k, m) for k, m in issues if k != "author"]
+            issues = [(k, m) for k, m in issues if k not in {"author", "given", "volume"}]
+        elif same_initial:
+            expanded.append((entry.key, same_initial))
         findings.extend(author_list_tells(entry.key, entry.fields.get("author", ""), len(rec.families) or None))
         for kind, msg in issues:
             # An author present in the bib but absent from the registry record
             # credits someone falsely -- integrity-shaped, unlike truncation.
-            invented_author = pinned and kind == "author" and "NOT in api" in msg
+            invented_author = pinned and kind == "author" and "invented?" in msg
             findings.append(Finding(
                 P2_FABRICATED if invented_author else P3_METADATA,
                 entry.key,
@@ -585,6 +612,17 @@ def main() -> int:
     sig = generation_signal(and_others, len(entries))
     if sig:
         findings.append(sig)
+    if sum(n for _, n in expanded) >= 3 and len(expanded) >= 2:
+        findings.append(Finding(
+            P2_FABRICATED,
+            "(corpus)",
+            f"{sum(n for _, n in expanded)} given names differ from the record but keep its initial, "
+            f"across {len(expanded)} entries",
+            "the shape of names expanded from initials-only sources (PubMed/Scholar listings); "
+            "invisible in an initials-only reference style. Entries: "
+            + ", ".join(k for k, _ in expanded),
+            "treat every author field as unverified; regenerate author lists from the registry record or the PDF byline",
+        ))
     print(render_ranked(findings, len(entries)))
 
     if args.show_bibtex and flagged:
