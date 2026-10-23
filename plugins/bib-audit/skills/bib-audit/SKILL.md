@@ -173,8 +173,16 @@ The audit finds *wrong metadata*. It cannot tell you *why* the metadata is wrong
 ## Workflow: fixing your own bibliography
 
 1. Run the audit. Triage by verdict per the table above, `[FABRICATED]` first.
-2. For each `[MISMATCH]`: rerun with `--key <key> --show-bibtex` — it prints the publisher's own BibTeX (Crossref content negotiation) with the existing citation key preserved, ready to paste.
-3. For `[UNRESOLVED]`/`[CHECK]` real papers: find the identifier with `scripts/lookup_id.py`, add it to the entry, re-run. This flips the entry from fuzzy matching to authoritative.
+2. For each `[MISMATCH]`: rerun with `--key <key> --show-bibtex` — it prints the BibTeX of the publisher's Crossref deposit (content negotiation) with the existing citation key preserved, ready to paste.
+3. Diff the entries against the publisher's own citation export, the file behind the article page's "Cite" / "Export citation" button, where one exists:
+
+   ```bash
+   python3 scripts/publisher_bib.py --bib refs.bib --save pubbib     # every entry with a DOI or eprint
+   python3 scripts/publisher_bib.py --file x.ris --bib refs.bib --key somekey2024   # a file saved from a browser
+   ```
+
+   BibTeX is taken when offered; RIS, EndNote, RefWorks, MEDLINE and CSL-JSON are converted. Known endpoints cover Springer Nature, PLOS, Copernicus and arXiv; other publishers are tried through the export link on the landing page. Sites behind a bot check (Elsevier, Wiley, NEJM, OUP, IEEE, ACM, ...) answer 403; the script then compares against the PubMed record when the work is indexed there, and names the page to export from in a browser. Settle each `DIFF` against the PDF, not by taking the export's side (gotcha below).
+4. For `[UNRESOLVED]`/`[CHECK]` real papers: find the identifier with `scripts/lookup_id.py`, add it to the entry, re-run. This flips the entry from fuzzy matching to authoritative.
 
    ```bash
    python3 scripts/lookup_id.py "Decoupled Weight Decay Regularization" --author Loshchilov
@@ -182,7 +190,7 @@ The audit finds *wrong metadata*. It cannot tell you *why* the metadata is wrong
    ```
 
    Confirm title + first author by eye before adding, and never add an identifier from memory. Conference/ML papers nearly all have arXiv IDs (`eprint = {...}, archivePrefix = {arXiv}`); journal papers get `doi = {...}`.
-4. Re-run until 0 mismatches. Rebuild the paper (`pdflatex` + `bibtex`) to confirm no undefined citations and, if only identifiers were added, an unchanged PDF.
+5. Re-run until 0 mismatches. Rebuild the paper (`pdflatex` + `bibtex`) to confirm no undefined citations and, if only identifiers were added, an unchanged PDF.
 
 ## Workflow: auditing a paper you didn't write
 
@@ -205,6 +213,7 @@ For API endpoints, curl one-liners, source ranking, and per-source caveats, read
 - **LaTeX accents break author comparison.** `H{\"a}nsch` must decode to Crossref's Unicode `Hänsch` (script handles `\"a`, `\c{c}`, `{\v s}`, `\ss`, etc.). Decode *before* stripping braces, or nested-brace `Gon{\c{c}}alves` degrades to `Gon\ccalves`, keys as `ccalves` — permanent false MISMATCH.
 - **Online-first ≠ print year; both right.** Crossref deposits multiple dates (`published-online` 2008 vs `published-print` 2009, Akbari et al., Climatic Change); journals' "cite this" pages typically use print year. Script accepts a bib year matching *any* deposited date — never hard-fail.
 - **Google Scholar BibTeX = discovery, not copying.** Can omit `year` (AdamW), no DOIs, mangles venues. Canonical-source ranking: Crossref content negotiation (DOI) > DBLP for CS/ML conferences (`curl https://dblp.org/rec/<key>.bib`) > arXiv export. Script doesn't consult DBLP — for ICLR-style no-DOI venues, pull the DBLP record manually.
+- **Publisher exports are a second source, not canon.** They fill gaps in the registry (Copernicus exports carry page ranges the Crossref deposit often omits) and carry their own errors: Nature's export of Lindsey et al. 2022 (Nat. Commun. 13:671) repeats six consortium members and adds 26 consortium names that are not on the byline, as its Crossref deposit does; PLOS BibTeX gives `pages = {1-20}` (the PDF page range) for article e1003816, where its RIS export is right; Frontiers writes `volume = {Volume 12 - 2022}`; NEJM's BibTeX for the RECOVERY trial has `author = {null null}` in place of the group author. Where export, registry, and PDF disagree, the PDF decides.
 - **ICLR/OpenReview papers have no page numbers.** `pages = {1--19}` on an ICLR entry = authored, not resolved — delete. DBLP record (publisher `OpenReview.net`, no pages) is canon.
 - **Semantic Scholar ≠ metadata source.** Its `citationStyles.bibtex` abbreviates given names (`Jane Doe` → `J. Doe`), lowercases titles, nulls some arXiv papers — the exact truncation failure this skill catches. S2 = citation graphs only.
 - **`eprint`/`archivePrefix`.** Classic `.bst` styles ignore them (PDF unchanged); arXiv export uses them — but *not* conventional in journal/conference bibs for published papers. Strictly conventional file wanted → arXiv IDs in a sidecar list, not the bib.

@@ -36,7 +36,7 @@ Findings come out ranked, worst first:
 - **P3** — wrong metadata on a real, correctly-identified work. Truncated author lists, preprint-vs-published year drift.
 - **P4** — formatting. Single-hyphen page ranges, DOIs stored as URLs, double-braced titles, `J.D.` initials.
 
-Every entry is resolved against Crossref, arXiv, DataCite and Semantic Scholar, and `--show-bibtex` gives you the publisher's own BibTeX to paste in place of a bad entry.
+Every entry is resolved against Crossref, arXiv, DataCite and Semantic Scholar, and `--show-bibtex` gives you the publisher's Crossref BibTeX to paste in place of a bad entry. `scripts/publisher_bib.py` also diffs entries against the publisher's own citation export (or the PubMed record where the publisher blocks scripts).
 
 It also flags the literal string `and others` in `.bib` source. That's valid BibTeX and the `.bst` renders it as "et al.", so it never looks broken in the built PDF, but a reference manager exporting a real record writes every author.
 
