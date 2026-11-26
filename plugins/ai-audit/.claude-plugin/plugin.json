@@ -1,7 +1,7 @@
 {
   "name": "ai-audit",
-  "version": "1.0.0",
-  "description": "Flag AI-generated language patterns in academic manuscripts — hedging tics, structural tells, flagged vocabulary, and punctuation signatures — so you can fix them before a reviewer or detector does.",
+  "version": "1.1.0",
+  "description": "Flag AI-generated language patterns in academic manuscripts (flagged vocabulary, throat-clearing, structural tells, choppy prose, word-level register, punctuation) and propose rewrites that keep the text readable.",
   "author": {
     "name": "Harald Kristen"
   },

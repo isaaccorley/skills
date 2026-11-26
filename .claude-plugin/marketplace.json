@@ -24,6 +24,17 @@
       "keywords": ["figures", "matplotlib", "tikz", "pgfplots", "latex", "research"],
       "category": "productivity",
       "source": "./plugins/research-paper-figures"
+    },
+    {
+      "name": "ai-audit",
+      "version": "1.1.0",
+      "description": "Flag AI-generated language patterns in academic manuscripts (flagged vocabulary, throat-clearing, structural tells, choppy prose, word-level register, punctuation) and propose rewrites that keep the text readable.",
+      "author": {
+        "name": "Harald Kristen"
+      },
+      "category": "productivity",
+      "keywords": ["academic-writing", "ai-detection", "latex", "peer-review", "manuscript", "language-audit"],
+      "source": "./plugins/ai-audit"
     }
   ]
 }
